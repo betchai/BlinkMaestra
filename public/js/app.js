@@ -480,34 +480,81 @@ async function runGenerationFlow(context, template, sourceDoc = null) {
 }
 
 function generatingView(root) {
-  const { template } = state.route;
+  const { template, context } = state.route;
   const stages = ['Understanding your request', 'Preparing relevant information', 'Generating content', 'Checking the result', 'Preparing your document'];
   root.innerHTML = `<div class="card editor-card" style="max-width:720px;margin:auto">
     <div class="generation-progress">
       <span class="progress-orb" aria-hidden="true">✦</span>
       <h2>Preparing your ${esc(template.name)}</h2>
-      <p class="card-copy">This usually takes under a minute.</p>
+      <p class="card-copy">This usually takes one to three minutes. You can keep this tab open.</p>
+      <p class="card-copy"><strong id="gen-elapsed">0:00</strong> elapsed</p>
       <div>${stages.map((s, i) => `<div class="progress-stage" data-stage="${i}">${s}…</div>`).join('')}</div>
+      <div id="gen-failed"></div>
     </div></div>`;
-  let i = 0;
-  const advance = setInterval(() => {
-    const el = root.querySelector(`[data-stage="${i}"]`);
-    if (el) el.classList.add('done');
-    i++;
-    const nextEl = root.querySelector(`[data-stage="${i}"]`);
-    if (nextEl) nextEl.classList.add('current');
-  }, 3500);
+
+  const stageEl = (i) => root.querySelector(`[data-stage="${i}"]`);
+  const setStage = (label) => {
+    let matched = stages.findIndex((s) => label.toLowerCase().includes(s.split(' ')[0].toLowerCase()) || s.toLowerCase().includes(label.toLowerCase().split('—')[0].trim()));
+    if (matched === -1) matched = label.toLowerCase().includes('regenerat') ? 3 : 2;
+    for (let i = 0; i < stages.length; i++) {
+      const el = stageEl(i);
+      el.classList.toggle('done', i < matched);
+      el.classList.toggle('current', i === matched);
+    }
+    stageEl(matched).textContent = `${label}`;
+  };
+  stageEl(0).classList.add('current');
+
+  // Elapsed timer
+  const start = Date.now();
+  const timer = setInterval(() => {
+    const s = Math.floor((Date.now() - start) / 1000);
+    const el = root.querySelector('#gen-elapsed');
+    if (el) el.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }, 1000);
+
+  const fail = (message) => {
+    clearInterval(timer);
+    const area = root.querySelector('#gen-failed');
+    for (let i = 0; i < stages.length; i++) { stageEl(i).classList.remove('current'); }
+    area.innerHTML = `<div class="announcement" role="alert" style="text-align:left">
+      <strong>We couldn't generate the document right now.</strong>
+      <p>${esc(message)}</p>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="button" id="gen-retry">Try again</button>
+        <button class="button secondary" id="gen-back">Back to templates</button>
+      </div>
+      <p class="card-copy" style="margin-top:8px">Your inputs are kept — "Try again" reuses them.</p></div>`;
+    area.querySelector('#gen-retry').addEventListener('click', () => generatingView(root));
+    area.querySelector('#gen-back').addEventListener('click', () => go({ name: 'templates' }));
+  };
 
   (async () => {
     try {
-      const result = await api.generate({ capability: template.capability, context: state.route.context });
-      clearInterval(advance);
-      state.route.lastResult = result;
-      openWorkspaceFromResult(result, template, state.route.context);
+      const { jobId } = await api.startGeneration({ capability: template.capability, context });
+      // Poll real server-side progress.
+      const poll = setInterval(async () => {
+        try {
+          const st = await api.generationStatus(jobId);
+          if (st.stage) setStage(st.stage);
+          if (st.status === 'done') {
+            clearInterval(poll); clearInterval(timer);
+            openWorkspaceFromResult(st.result, template, context);
+          } else if (st.status === 'failed') {
+            clearInterval(poll);
+            fail(st.error || 'The AI service did not respond. Please try again.');
+          }
+        } catch (err) { /* transient poll errors: keep polling */ }
+      }, 2000);
+      // Safety net: stop polling after 12 minutes and report.
+      setTimeout(() => {
+        if (root.querySelector('#gen-elapsed')) {
+          clearInterval(poll); clearInterval(timer);
+          fail('This is taking unusually long. The AI service may be busy — please try again in a minute.');
+        }
+      }, 12 * 60_000);
     } catch (err) {
-      clearInterval(advance);
-      toast(err.message);
-      go({ name: 'templates' });
+      fail(err.message);
     }
   })();
 }
@@ -568,7 +615,11 @@ async function workspaceView(root) {
 
     <div class="card" style="margin-bottom:40px"><div class="card-heading"><h2>Continue related work</h2></div>
       <div class="toolbar-actions" id="related-work">
-        ${(doc.relatedWork || []).map((r) => `<button class="button secondary" data-related="${esc(r)}">＋ ${esc(r)}</button>`).join('') || '<p class="card-copy">Generate related documents from this one without re-entering details.</p>'}
+        ${(doc.relatedWork || []).map((r) => {
+          const label = typeof r === 'string' ? r : r.label;
+          const tpl = typeof r === 'string' ? null : r.template;
+          return `<button class="button secondary" data-related="${esc(label)}" data-template="${esc(tpl || '')}">＋ ${esc(label)}</button>`;
+        }).join('') || '<p class="card-copy">Generate related documents from this one without re-entering details.</p>'}
       </div>
       <div id="refine-area"></div>
     </div>`;
@@ -722,22 +773,13 @@ async function workspaceView(root) {
     try { await api.feedback(doc.id, { helpful: b.dataset.fb === 'yes' }); toast('Thanks for the feedback'); } catch (e) { toast(e.message); }
   }));
 
-  // Workflow chaining: carry context forward into related capability
-  root.querySelectorAll('[data-related]').forEach((b) => b.addEventListener('click', async () => {
-    const label = b.dataset.related;
-    const map = { 'Generate Assessment': 'assessment', 'Answer Key': 'assessment', Rubric: 'assessment', 'Item Analysis Template': 'assessment', 'Create Activity Sheet': 'activity-sheet', 'Create Remediation': 'activity-sheet', Program: 'program-plan', 'Attendance Documentation': 'accomplishment-report', 'Narrative Report': 'accomplishment-report', 'Accomplishment Report': 'accomplishment-report' };
-    const tplId = map[label];
-    if (!tplId) {
-      // Free-form refinement of this document toward the requested goal
-      try {
-        const result = await api.refine({ documentId: doc.id, capability: doc.capability, title: currentDoc.title, contentHtml: editor.innerHTML, instruction: label });
-        const newDoc = await api.createDocument({ title: result.title || label, capability: doc.capability, documentType: label, contentHtml: result.contentHtml, references: result.references || [], relatedWork: result.relatedWork || [], validation: result.validation });
-        go({ name: 'workspace', docId: newDoc.id });
-      } catch (err) { toast(err.message); }
-      return;
-    }
+  // Workflow chaining: carry context forward into the related capability's template.
+  root.querySelectorAll('[data-related]').forEach((b) => b.addEventListener('click', () => {
+    const tplId = b.dataset.template;
+    if (!tplId) return toast('That related workflow is unavailable.');
     const ctx = { ...(currentDoc.context || {}) };
     ctx.topic = ctx['Topic / competency'] || ctx.topic;
+    ctx.learningCompetency = ctx['Learning competency'] || ctx.learningCompetency;
     ctx.from = currentDoc.title;
     startWorkflow(tplId, ctx);
   }));

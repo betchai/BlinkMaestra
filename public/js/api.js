@@ -40,7 +40,8 @@ export const api = {
   templates: () => request('/api/templates').then((r) => r.templates),
   knowledge: (capability) => request(`/api/knowledge${capability ? `?capability=${encodeURIComponent(capability)}` : ''}`).then((r) => r.references),
 
-  generate: (p) => request('/api/generate', { method: 'POST', body: p }).then((r) => r.result),
+  startGeneration: (p) => request('/api/generate', { method: 'POST', body: p }),
+  generationStatus: (jobId) => request(`/api/generate/${jobId}`),
   refine: (p) => request('/api/refine', { method: 'POST', body: p }).then((r) => r.result),
   chains: (capability) => request('/api/chains', { method: 'POST', body: { capability } }).then((r) => r.next),
   history: () => request('/api/history').then((r) => r.requests),

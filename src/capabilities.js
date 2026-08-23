@@ -42,13 +42,34 @@ export function routeCapability(text) {
 }
 
 export function relatedCapabilities(capabilityName) {
-  const cap = CAPABILITIES.find((c) => c.name === capabilityName);
-  if (!cap) return CAPABILITIES.slice(0, 3).map((c) => c.name);
-  // Domain-specific next-step chains for the most common flows.
   const CHAINS = {
-    'Lesson Planning': ['Generate Assessment', 'Create Activity Sheet', 'Create Remediation'],
-    'Classroom Assessment': ['Answer Key', 'Rubric', 'Item Analysis Template'],
-    'School Programs': ['Program', 'Attendance Documentation', 'Narrative Report', 'Accomplishment Report'],
+    'Lesson Planning': [
+      { label: 'Generate Assessment', template: 'assessment' },
+      { label: 'Create Activity Sheet', template: 'activity-sheet' },
+      { label: 'Create Remediation', template: 'activity-sheet' },
+    ],
+    'Classroom Assessment': [
+      { label: 'Create Answer Key & Rubric', template: 'assessment' },
+      { label: 'Create Practice Worksheet', template: 'activity-sheet' },
+    ],
+    'Learning Materials': [
+      { label: 'Plan the Supporting Lesson', template: 'ilaw' },
+      { label: 'Create a Matching Assessment', template: 'assessment' },
+    ],
+    'School Programs': [
+      { label: 'Generate Program Plan', template: 'program-plan' },
+      { label: 'Create Attendance Documentation', template: 'accomplishment-report' },
+      { label: 'Write Narrative Report', template: 'accomplishment-report' },
+      { label: 'Write Accomplishment Report', template: 'accomplishment-report' },
+    ],
   };
-  return CHAINS[capabilityName] || cap.chain.map((n) => `Open ${n}`);
+  if (CHAINS[capabilityName]) return CHAINS[capabilityName];
+  // Sensible defaults per capability family.
+  const DEFAULTS = {
+    'Parent Communication': [{ label: 'Draft a Follow-up Advisory', template: 'parent-advisory' }],
+    'Professional Growth': [{ label: 'Write a Supporting Narrative Report', template: 'accomplishment-report' }],
+    'Classroom Management': [{ label: 'Plan a Related Lesson', template: 'ilaw' }],
+    'School Documentation': [{ label: 'Summarize as Accomplishment Report', template: 'accomplishment-report' }, { label: 'Notify Parents', template: 'parent-advisory' }],
+  };
+  return DEFAULTS[capabilityName] || [{ label: 'Create an Activity Sheet', template: 'activity-sheet' }];
 }

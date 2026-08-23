@@ -92,8 +92,9 @@ async function callProvider({ capability, context, profile, refs }) {
   return parsed;
 }
 
-export async function runGeneration({ capability, requestedCapability, context = {}, profile = {}, knowledgeStore = [] }) {
+export async function runGeneration({ capability, requestedCapability, context = {}, profile = {}, knowledgeStore = [], onStage = () => {} }) {
   // Stage 1: intent detection / capability routing
+  onStage('Understanding your request');
   let resolved = capability || null;
   if (!resolved && context.request) {
     const routed = routeCapability(context.request);
@@ -102,16 +103,21 @@ export async function runGeneration({ capability, requestedCapability, context =
   if (!resolved) resolved = requestedCapability || 'General';
 
   // Stage 2: knowledge retrieval
+  onStage(`Preparing relevant information (${resolved})`);
   const refs = knowledgeFor(resolved, knowledgeStore);
 
   // Stage 3-4: generation + validation with one retry on validation failure
+  onStage('Generating content — the AI model is writing');
   let result = await callProvider({ capability: resolved, context, profile, refs });
+  onStage('Checking the result');
   let check = validate(result);
   if (!check.ok) {
     console.warn('[pipeline] validation issues, retrying once:', check.issues);
+    onStage('Checking found gaps — regenerating');
     result = await callProvider({ capability: resolved, context: { ...context, previousIssues: check.issues }, profile, refs });
     check = validate(result);
   }
+  onStage('Preparing your document');
   result.validation = check.ok ? 'passed' : 'uncertain';
   result.validationIssues = check.issues;
   result.relatedWork = relatedCapabilities(resolved);

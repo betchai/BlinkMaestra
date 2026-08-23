@@ -314,21 +314,53 @@ export async function handleApi(req, res, pathname) {
   }
 
   // ---------- AI ----------
+  // Generation runs as a background job so the teacher sees live progress.
+  const jobs = generationJobs;
   if (pathname === '/api/generate' && method === 'POST') {
     const id = await requireUser(req, res); if (!id) return;
     if (rateLimited(`gen:${id}`, 12)) return send(res, 429, { error: 'You have made many requests in a short time. Please wait a minute before generating again.' });
     const p = await body(req);
     const data = await db();
     const profile = data.profiles.find((x) => x.userId === id) || {};
-    const result = await runGeneration({ requestedCapability: p.capability, context: p.context || {}, profile, knowledgeStore: data.knowledge });
-    data.aiRequests.push({
-      id: randomUUID(), userId: id, capability: result.capability || p.capability || 'General',
-      title: result.title || '', createdAt: new Date().toISOString(),
-      documentId: p.documentId || null, validation: result.validation,
-      usage: result.usage ? { input_tokens: result.usage.input_tokens, output_tokens: result.usage.output_tokens } : null,
+    const jobId = randomUUID();
+    const job = { id: jobId, userId: id, status: 'queued', stage: 'Queued', startedAt: Date.now(), result: null, error: null };
+    jobs.set(jobId, job);
+    runGeneration({
+      requestedCapability: p.capability,
+      context: p.context || {},
+      profile,
+      knowledgeStore: data.knowledge,
+      onStage: (stage) => { job.stage = stage; },
+    }).then((result) => {
+      job.result = result;
+      job.status = 'done';
+      data.aiRequests.push({
+        id: randomUUID(), userId: id, capability: result.capability || p.capability || 'General',
+        title: result.title || '', createdAt: new Date().toISOString(),
+        documentId: p.documentId || null, validation: result.validation,
+        usage: result.usage ? { input_tokens: result.usage.input_tokens, output_tokens: result.usage.output_tokens } : null,
+      });
+      save(data);
+      setTimeout(() => jobs.delete(jobId), 15 * 60_000); // cleanup
+    }).catch((error) => {
+      console.error('[generate job]', error.message);
+      job.status = 'failed';
+      job.error = error.message || 'We could not generate the document right now. Please try again.';
+      setTimeout(() => jobs.delete(jobId), 15 * 60_000);
     });
-    await save(data);
-    return send(res, 200, { result });
+    return send(res, 202, { jobId });
+  }
+
+  if ((m = pathname.match(/^\/api\/generate\/([^/]+)$/)) && method === 'GET') {
+    const id = await requireUser(req, res); if (!id) return;
+    const job = jobs.get(m[1]);
+    if (!job || job.userId !== id) return send(res, 404, { error: 'That generation task was not found.' });
+    return send(res, 200, {
+      status: job.status, stage: job.stage,
+      elapsedSeconds: Math.round((Date.now() - job.startedAt) / 1000),
+      result: job.status === 'done' ? job.result : undefined,
+      error: job.status === 'failed' ? job.error : undefined,
+    });
   }
 
   if (pathname === '/api/refine' && method === 'POST') {
@@ -404,6 +436,9 @@ function parseCompetencyImport(text) {
     return { code: cells[0], grade: cells[1], subject: cells[2], description: cells.slice(3, -1).join(',') || cells[3], quarter: cells[cells.length - 1] };
   }).filter(Boolean);
 }
+
+// In-memory generation jobs (live progress; results are short-lived until the client saves them).
+const generationJobs = new Map();
 
 function safeName(title) {
   return title.replace(/[^a-z0-9-_ ]/gi, '').trim().replace(/\s+/g, '-') || 'document';
