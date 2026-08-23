@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b5e55" />
+    <meta name="description" content="BLinkMaestra — the AI copilot built for DepEd teachers. Start from a task, answer only what's missing, get an editable, export-ready document." />
+    <title>BLinkMaestra — Your Teaching Copilot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet" />
+    <style>
+      :root { --forest:#0b5e55; --forest-2:#12897b; --gold:#f7c95c; --mint:#e6f3ef; --ink:#12312c; --muted:#5d7a74; --line:#dcebe6; }
+      *{box-sizing:border-box} body{margin:0;font:16px/1.6 "DM Sans",system-ui,sans-serif;color:var(--ink)}
+      h1,h2{font-family:Fraunces,serif;letter-spacing:-1px}
+      header{display:flex;justify-content:space-between;align-items:center;padding:18px clamp(20px,5vw,64px);position:sticky;top:0;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);z-index:5}
+      .brand{display:flex;gap:11px;align-items:center;font-weight:700}
+      .brand-mark{background:var(--gold);color:#093e38;width:38px;height:38px;border-radius:11px;display:grid;place-items:center;font-family:Fraunces,serif;font-size:20px}
+      .brand span b{font-size:17px;display:block;line-height:1.1}.brand span small{font-weight:500;color:var(--muted);font-size:11px}
+      nav a{text-decoration:none;margin-left:22px;color:var(--ink);font-weight:600;font-size:14px}
+      nav a.cta{background:var(--forest);color:#fff;padding:10px 18px;border-radius:9px}
+      nav a.cta:hover{background:var(--forest-2)}
+      .hero{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(300px,.9fr);gap:48px;align-items:center;padding:72px clamp(20px,5vw,64px) 56px;max-width:1200px;margin:auto}
+      .hero h1{font-size:clamp(36px,5vw,58px);line-height:1.05;margin:14px 0 16px}
+      .hero p.lead{font-size:18px;color:var(--muted);max-width:520px;margin:0 0 28px}
+      .eyebrow{color:var(--forest);text-transform:uppercase;letter-spacing:1.4px;font-weight:700;font-size:12px}
+      .buttons{display:flex;gap:12px;flex-wrap:wrap}
+      .btn{display:inline-block;text-decoration:none;text-align:center;border-radius:10px;padding:13px 24px;font-weight:700;font-size:15px}
+      .btn.primary{background:var(--forest);color:#fff;box-shadow:0 6px 16px rgba(11,94,85,.25)}
+      .btn.primary:hover{background:var(--forest-2)}
+      .btn.secondary{border:1.5px solid var(--line);color:var(--forest);background:#fff}
+      .mockup{background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:0 24px 60px rgba(10,63,56,.10);overflow:hidden}
+      .mockup .bar{display:flex;gap:6px;padding:12px 14px;border-bottom:1px solid var(--line)}
+      .mockup .bar i{width:10px;height:10px;border-radius:50%;background:#e3ded2}
+      .mockup .body{padding:22px}
+      .chip{display:inline-block;background:var(--mint);color:var(--forest);font-size:11px;font-weight:700;border-radius:99px;padding:4px 10px;margin:0 6px 8px 0}
+      .mockup h3{font-family:Fraunces,serif;margin:6px 0 10px;font-size:19px}
+      .skel{height:9px;border-radius:5px;background:linear-gradient(90deg,#eef5f2,#f7fbfa);margin:8px 0}
+      .skel.w60{width:60%}.skel.w80{width:80%}.skel.w40{width:40%}
+      .stage{display:flex;gap:9px;align-items:center;color:var(--forest);font-size:13px;font-weight:600;margin-top:14px}
+      .dot{width:8px;height:8px;border-radius:50%;background:var(--gold);animation:pulse 1.2s infinite}
+      @keyframes pulse{50%{opacity:.4}}
+      section.features{max-width:1100px;margin:auto;padding:26px clamp(20px,5vw,64px) 70px}
+      section.features h2{font-size:clamp(26px,3.5vw,36px);text-align:center;margin-bottom:40px}
+      .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}
+      .card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:24px}
+      .card .ic{font-size:26px}
+      .card h3{font-size:17px;margin:12px 0 6px;font-family:Fraunces,serif}
+      .card p{color:var(--muted);font-size:14px;margin:0}
+      .flow{background:var(--forest);color:#eaf8f4;padding:64px clamp(20px,5vw,64px);text-align:center}
+      .flow h2{font-size:clamp(24px,3.5vw,34px);color:#fff}
+      .steps{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-top:30px}
+      .steps span{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);padding:9px 16px;border-radius:99px;font-size:13px;font-weight:600}
+      footer{padding:34px;text-align:center;color:var(--muted);font-size:13px;border-top:1px solid var(--line)}
+      @media(max-width:820px){.hero{grid-template-columns:1fr;padding-top:44px}.mockup{order:2}}
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand"><span class="brand-mark">B</span><span><b>BLinkMaestra</b><small>DepEd Teacher Copilot</small></span></div>
+      <nav>
+        <a href="#features">Features</a>
+        <a href="/app">Sign in</a>
+        <a class="cta" href="/app#register">Get started</a>
+      </nav>
+    </header>
+
+    <div class="hero">
+      <div>
+        <p class="eyebrow">Built for DepEd teachers</p>
+        <h1>Spend your time teaching,<br/>not typing paperwork.</h1>
+        <p class="lead">Pick a task — lesson plan, quiz, parent letter, MOV narrative. BLinkMaestra already knows your grade level and subjects, asks only for what's missing, and drafts an editable, export-ready document.</p>
+        <div class="buttons">
+          <a class="btn primary" href="/app#register">Create your free account</a>
+          <a class="btn secondary" href="/app">Sign in</a>
+        </div>
+      </div>
+      <div class="mockup" aria-hidden="true">
+        <div class="bar"><i></i><i></i><i></i></div>
+        <div class="body">
+          <div>
+            <span class="chip">✓ Grade 6</span><span class="chip">✓ Science</span><span class="chip">↳ From: Photosynthesis DLL</span>
+          </div>
+          <h3>Assessment with Answer Key</h3>
+          <div class="skel w80"></div><div class="skel"></div><div class="skel w60"></div>
+          <div class="stage"><span class="dot"></span> Generating content…</div>
+        </div>
+      </div>
+    </div>
+
+    <section class="features" id="features">
+      <h2>One connected workspace, not another chatbot</h2>
+      <div class="grid">
+        <div class="card"><span class="ic">🧭</span><h3>Guided workflows</h3><p>No prompting skills needed. Templates collect only the information your profile doesn't already have.</p></div>
+        <div class="card"><span class="ic">📚</span><h3>DepEd-aware drafting</h3><p>Drafts are grounded in categorized references and never invent official issuances — assumptions are clearly labeled.</p></div>
+        <div class="card"><span class="ic">✍️</span><h3>Select &amp; refine</h3><p>Highlight any paragraph and improve, simplify, translate, or shorten just that part. You approve every change.</p></div>
+        <div class="card"><span class="ic">🔗</span><h3>Chained workflows</h3><p>Finish a lesson plan, then generate the matching assessment, activity sheet, or remediation without re-entering details.</p></div>
+        <div class="card"><span class="ic">🕘</span><h3>Versions &amp; recovery</h3><p>Every edit is versioned and restorable. Autosave keeps your work safe even if the connection drops.</p></div>
+        <div class="card"><span class="ic">📄</span><h3>Real exports</h3><p>Download genuine DOCX and PDF files with proper headings, tables, and lists — ready for printing or submission.</p></div>
+      </div>
+    </section>
+
+    <section class="flow">
+      <h2>From task to finished document</h2>
+      <div class="steps">
+        <span>Choose a task</span><span>Answer only what's missing</span><span>AI drafts it</span>
+        <span>Review &amp; refine</span><span>Save &amp; version</span><span>Export DOCX / PDF</span>
+      </div>
+    </section>
+
+    <footer>BLinkMaestra — made for Filipino teachers. Your documents stay private to your account.</footer>
+  </body>
+</html>

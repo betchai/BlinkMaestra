@@ -1,0 +1,410 @@
+import { db, save } from './db.js';
+import * as auth from './auth.js';
+import * as docs from './documents.js';
+import { runGeneration, pipelineStages } from './pipeline.js';
+import { listTemplates, CAPABILITIES, routeCapability, relatedCapabilities } from './capabilities.js';
+import { knowledgeFor, CATEGORIES } from './knowledge.js';
+import { searchCompetencies, COMPETENCY_SOURCE } from './curriculum.js';
+import { toDocx, toPdf } from './export.js';
+import { randomUUID } from 'node:crypto';
+
+export function send(res, status, payload, headers = {}) {
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers });
+  res.end(JSON.stringify(payload));
+}
+
+async function body(req) {
+  let text = '';
+  for await (const chunk of req) text += chunk;
+  if (text.length > 1_000_000) throw Object.assign(new Error('That request is too large.'), { status: 413 });
+  try { return JSON.parse(text || '{}'); } catch {
+    throw Object.assign(new Error('Please send valid information and try again.'), { status: 400 });
+  }
+}
+
+async function requireUser(req, res) {
+  const id = await auth.requireAuth(req);
+  if (!id) send(res, 401, { error: 'Please sign in to continue.' });
+  return id;
+}
+
+function requireAdmin(user, res) {
+  if (user.role !== 'admin') {
+    send(res, 403, { error: 'You do not have permission to perform this action.' });
+    return false;
+  }
+  return true;
+}
+
+const rateBuckets = new Map();
+function rateLimited(key, limit = 20, windowMs = 60_000) {
+  const now = Date.now();
+  const bucket = rateBuckets.get(key) || [];
+  const recent = bucket.filter((t) => now - t < windowMs);
+  recent.push(now);
+  rateBuckets.set(key, recent);
+  return recent.length > limit;
+}
+
+export async function handleApi(req, res, pathname) {
+  const method = req.method;
+
+  // ---------- Auth ----------
+  if (pathname === '/api/register' && method === 'POST') {
+    const p = await body(req);
+    const { user, token, profile } = await auth.register(p);
+    return send(res, 201, { user: auth.publicUser(user), profile }, { 'set-cookie': auth.sessionCookie(token) });
+  }
+
+  if (pathname === '/api/login' && method === 'POST') {
+    const p = await body(req);
+    const { user, token, profile } = await loginSafe(p);
+    return send(res, 200, { user: auth.publicUser(user), profile }, { 'set-cookie': auth.sessionCookie(token) });
+  }
+
+  if (pathname === '/api/logout' && method === 'POST') {
+    await auth.logout(req);
+    return send(res, 200, { ok: true }, { 'set-cookie': auth.CLEAR_COOKIE });
+  }
+
+  if (pathname === '/api/password-reset' && method === 'POST') {
+    const p = await body(req);
+    await auth.requestPasswordReset(p.email);
+    return send(res, 200, { ok: true });
+  }
+
+  if (pathname === '/api/password-reset/confirm' && method === 'POST') {
+    const p = await body(req);
+    await auth.resetPassword(p);
+    return send(res, 200, { ok: true });
+  }
+
+  if (pathname === '/api/me' && method === 'GET') {
+    const id = await requireUser(req, res); if (!id) return;
+    const data = await db();
+    const u = data.users.find((x) => x.id === id);
+    return send(res, 200, { user: auth.publicUser(u), profile: data.profiles.find((x) => x.userId === id) });
+  }
+
+  if (pathname === '/api/profile' && method === 'PUT') {
+    const id = await requireUser(req, res); if (!id) return;
+    const p = await body(req);
+    const data = await db();
+    const i = data.profiles.findIndex((x) => x.userId === id);
+    delete p.userId;
+    data.profiles[i] = { ...data.profiles[i], ...p, userId: id, onboardingComplete: true };
+    await save(data);
+    return send(res, 200, { profile: data.profiles[i] });
+  }
+
+  // ---------- Capabilities / routing / templates / knowledge ----------
+  if (pathname === '/api/capabilities' && method === 'GET') {
+    const id = await requireUser(req, res); if (!id) return;
+    return send(res, 200, { capabilities: CAPABILITIES, stages: pipelineStages() });
+  }
+
+  if (pathname === '/api/route' && method === 'POST') {
+    const id = await requireUser(req, res); if (!id) return;
+    const p = await body(req);
+    return send(res, 200, routeCapability(p.text));
+  }
+
+  if (pathname === '/api/templates' && method === 'GET') {
+    const id = await requireUser(req, res); if (!id) return;
+    const data = await db();
+    return send(res, 200, { templates: listTemplates(data.templates.filter((t) => t.source !== 'seed')) });
+  }
+
+  if (pathname === '/api/knowledge' && method === 'GET') {
+    const id = await requireUser(req, res); if (!id) return;
+    const data = await db();
+    const url = new URL(req.url, 'http://x');
+    const capability = url.searchParams.get('capability');
+    return send(res, 200, { references: capability ? knowledgeFor(capability, data.knowledge) : [...data.knowledge], categories: CATEGORIES });
+  }
+
+  // ---------- Admin ----------
+  if (pathname === '/api/admin/overview' && method === 'GET') {
+    const id = await requireUser(req, res); if (!id) return;
+    const data = await db();
+    const user = data.users.find((u) => u.id === id);
+    if (!requireAdmin(user, res)) return;
+    return send(res, 200, {
+      templates: listTemplates(data.templates.filter((t) => t.source !== 'seed')),
+      knowledge: data.knowledge,
+      competencyCount: data.competencies.length,
+      users: data.users.length,
+    });
+  }
+
+  if (pathname === '/api/admin/competencies/import' && method === 'POST') {
+    const id = await requireUser(req, res); if (!id) return;
+    const data = await db();
+    const user = data.users.find((u) => u.id === id);
+    if (!requireAdmin(user, res)) return;
+    const { text } = await body(req);
+    const items = parseCompetencyImport(String(text || ''));
+    if (!items.length) return send(res, 400, { error: 'No valid rows found. Use JSON array or CSV lines: code,grade,subject,description,quarter' });
+    const existing = new Set(data.competencies.map((c) => c.code));
+    let added = 0;
+    for (const c of items) {
+      if (!c.code || !c.description || existing.has(c.code)) continue;
+      data.competencies.push({
+        id: randomUUID(), code: c.code.slice(0, 60), gradeLevel: (c.grade || '').slice(0, 40),
+        subject: (c.subject || '').slice(0, 60), description: c.description.slice(0, 400),
+        quarterTerm: (c.quarter || '').slice(0, 20),
+      });
+      added++;
+    }
+    await save(data);
+    return send(res, 200, { added, total: data.competencies.length });
+  }
+
+  if (pathname === '/api/competencies' && method === 'GET') {
+    const id = await requireUser(req, res); if (!id) return;
+    const data = await db();
+    const url = new URL(req.url, 'http://x');
+    return send(res, 200, {
+      competencies: searchCompetencies(data.competencies, {
+        grade: url.searchParams.get('grade'), subject: url.searchParams.get('subject'), q: url.searchParams.get('q'),
+      }),
+      source: COMPETENCY_SOURCE,
+    });
+  }
+
+  if (pathname === '/api/competencies' && method === 'POST') {
+    // Teachers save personal competency references to their profile.
+    const id = await requireUser(req, res); if (!id) return;
+    const p = await body(req);
+    const data = await db();
+    const i = data.profiles.findIndex((x) => x.userId === id);
+    const saved = new Set(data.profiles[i].savedCompetencies || []);
+    for (const code of p.codes || []) saved.add(code);
+    data.profiles[i].savedCompetencies = [...saved];
+    await save(data);
+    return send(res, 200, { profile: data.profiles[i] });
+  }
+
+  if (pathname.startsWith('/api/admin/') && method !== 'GET') {
+    const id = await requireUser(req, res); if (!id) return;
+    const data = await db();
+    const user = data.users.find((u) => u.id === id);
+    if (!requireAdmin(user, res)) return;
+
+    if (pathname === '/api/admin/templates' && method === 'POST') {
+      const t = await body(req);
+      t.id = t.id || randomUUID();
+      data.templates.push(t);
+      await save(data);
+      return send(res, 201, { template: t });
+    }
+    if (pathname === '/api/admin/templates/update' && method === 'POST') {
+      const t = await body(req);
+      const i = data.templates.findIndex((x) => x.id === t.id);
+      if (i === -1) return send(res, 404, { error: 'Template not found.' });
+      data.templates[i] = { ...data.templates[i], ...t };
+      await save(data);
+      return send(res, 200, { template: data.templates[i] });
+    }
+    if (pathname === '/api/admin/knowledge' && method === 'POST') {
+      const k = await body(req);
+      k.id = k.id || randomUUID();
+      k.active = k.active !== false;
+      data.knowledge.push(k);
+      await save(data);
+      return send(res, 201, { reference: k });
+    }
+    if (pathname === '/api/admin/knowledge/update' && method === 'POST') {
+      const k = await body(req);
+      const i = data.knowledge.findIndex((x) => x.id === k.id);
+      if (i === -1) return send(res, 404, { error: 'Reference not found.' });
+      data.knowledge[i] = { ...data.knowledge[i], ...k };
+      await save(data);
+      return send(res, 200, { reference: data.knowledge[i] });
+    }
+    if (pathname === '/api/admin/competencies' && method === 'POST') {
+      const p = await body(req);
+      const items = Array.isArray(p.competencies) ? p.competencies : [p];
+      const existing = new Set(data.competencies.map((c) => c.code));
+      for (const c of items) {
+        if (!c.code || !c.description) continue;
+        if (existing.has(c.code)) continue;
+        data.competencies.push({
+          id: c.id || randomUUID(), code: String(c.code).slice(0, 60),
+          gradeLevel: String(c.gradeLevel || '').slice(0, 40), subject: String(c.subject || '').slice(0, 60),
+          description: String(c.description).slice(0, 400), quarterTerm: String(c.quarterTerm || '').slice(0, 20),
+        });
+      }
+      await save(data);
+      return send(res, 201, { count: data.competencies.length });
+    }
+  }
+
+  // ---------- Documents ----------
+  if (pathname === '/api/documents' && method === 'GET') {
+    const id = await requireUser(req, res); if (!id) return;
+    return send(res, 200, { documents: await docs.listDocuments(id) });
+  }
+
+  if (pathname === '/api/documents' && method === 'POST') {
+    const id = await requireUser(req, res); if (!id) return;
+    return send(res, 201, { document: await docs.createDocument(id, await body(req)) });
+  }
+
+  let m;
+  if ((m = pathname.match(/^\/api\/documents\/([^/]+)(\/.*)?$/))) {
+    const [, docId, sub] = m;
+    if (!sub && method === 'GET') {
+      const id = await requireUser(req, res); if (!id) return;
+      return send(res, 200, { document: await docs.getDocument(id, docId) });
+    }
+    if (!sub && ['PUT', 'PATCH'].includes(method)) {
+      const id = await requireUser(req, res); if (!id) return;
+      const d = await docs.updateDocument(id, docId, await body(req));
+      return send(res, 200, { document: d });
+    }
+    if (sub === '/duplicate' && method === 'POST') {
+      const id = await requireUser(req, res); if (!id) return;
+      return send(res, 201, { document: await docs.duplicateDocument(id, docId) });
+    }
+    if (sub === '/restore-document' && method === 'POST') {
+      const id = await requireUser(req, res); if (!id) return;
+      return send(res, 200, { document: await docs.restoreDocument(id, docId) });
+    }
+    if (!sub && method === 'DELETE') {
+      const id = await requireUser(req, res); if (!id) return;
+      const url = new URL(req.url, 'http://x');
+      if (url.searchParams.get('permanent') === 'true') {
+        await docs.purgeDocument(id, docId);
+        return send(res, 200, { ok: true });
+      }
+      return send(res, 200, { document: await docs.softDeleteDocument(id, docId) });
+    }
+    if ((m = sub?.match(/^\/versions\/([^/]+)\/restore$/)) && method === 'POST') {
+      const id = await requireUser(req, res); if (!id) return;
+      return send(res, 200, { document: await docs.restoreVersion(id, docId, m[1]) });
+    }
+    if (sub === '/feedback' && method === 'POST') {
+      const id = await requireUser(req, res); if (!id) return;
+      const p = await body(req);
+      const d = await docs.getDocument(id, docId);
+      d.feedback = { helpful: !!p.helpful, comment: String(p.comment || '').slice(0, 1000), createdAt: new Date().toISOString() };
+      const data = await db();
+      data.feedback.push({ id: randomUUID(), userId: id, documentId: docId, capability: d.capability, ...d.feedback });
+      await save(data);
+      return send(res, 200, { ok: true });
+    }
+    if (sub === '/export' && method === 'POST') {
+      const id = await requireUser(req, res); if (!id) return;
+      if (rateLimited(`export:${id}`, 30)) return send(res, 429, { error: 'Too many exports right now. Please wait a moment.' });
+      const d = await docs.getDocument(id, docId);
+      const format = (await body(req)).format || 'docx';
+      if (format === 'pdf') {
+        const buf = await toPdf(d.title, d.contentHtml);
+        res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${safeName(d.title)}.pdf"` });
+        return res.end(buf);
+      }
+      if (format === 'docx') {
+        const buf = await toDocx(d.title, d.contentHtml);
+        res.writeHead(200, { 'content-type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'content-disposition': `attachment; filename="${safeName(d.title)}.docx"` });
+        return res.end(buf);
+      }
+      return send(res, 400, { error: 'Unsupported export format.' });
+    }
+  }
+
+  // ---------- AI ----------
+  if (pathname === '/api/generate' && method === 'POST') {
+    const id = await requireUser(req, res); if (!id) return;
+    if (rateLimited(`gen:${id}`, 12)) return send(res, 429, { error: 'You have made many requests in a short time. Please wait a minute before generating again.' });
+    const p = await body(req);
+    const data = await db();
+    const profile = data.profiles.find((x) => x.userId === id) || {};
+    const result = await runGeneration({ requestedCapability: p.capability, context: p.context || {}, profile, knowledgeStore: data.knowledge });
+    data.aiRequests.push({
+      id: randomUUID(), userId: id, capability: result.capability || p.capability || 'General',
+      title: result.title || '', createdAt: new Date().toISOString(),
+      documentId: p.documentId || null, validation: result.validation,
+      usage: result.usage ? { input_tokens: result.usage.input_tokens, output_tokens: result.usage.output_tokens } : null,
+    });
+    await save(data);
+    return send(res, 200, { result });
+  }
+
+  if (pathname === '/api/refine' && method === 'POST') {
+    const id = await requireUser(req, res); if (!id) return;
+    if (rateLimited(`refine:${id}`, 30)) return send(res, 429, { error: 'Please wait a moment before refining again.' });
+    const p = await body(req);
+    const data = await db();
+    const profile = data.profiles.find((x) => x.userId === id) || {};
+    const refs = knowledgeFor(p.capability || 'General', data.knowledge);
+    const result = await runGeneration({
+      capability: p.capability || 'Document refinement',
+      context: {
+        mode: 'refine',
+        instruction: p.instruction,
+        selectedText: p.selectedText,
+        surroundingTitle: p.title,
+        fullDocument: p.selectionOnly ? undefined : p.contentHtml,
+      },
+      profile,
+      knowledgeStore: data.knowledge,
+    });
+    data.aiRequests.push({ id: randomUUID(), userId: id, capability: `Refinement (${p.instruction || 'improve'})`, createdAt: new Date().toISOString(), documentId: p.documentId || null, usage: null });
+    await save(data);
+    return send(res, 200, { result });
+  }
+
+  if (pathname === '/api/history' && method === 'GET') {
+    const id = await requireUser(req, res); if (!id) return;
+    const data = await db();
+    return send(res, 200, {
+      requests: data.aiRequests
+        .filter((r) => r.userId === id)
+        .map(({ userId, ...r }) => r)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 50),
+    });
+  }
+
+  if (pathname === '/api/chains' && method === 'POST') {
+    const id = await requireUser(req, res); if (!id) return;
+    const p = await body(req);
+    return send(res, 200, { next: relatedCapabilities(p.capability) });
+  }
+
+  return send(res, 404, { error: 'Not found' });
+}
+
+async function loginSafe(p) {
+  try {
+    return await auth.login(p);
+  } catch (e) {
+    throw e;
+  }
+}
+
+// Accepts a JSON array of competency objects or CSV text with header or plain rows:
+// code, grade, subject, description, quarter
+function parseCompetencyImport(text) {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('[')) {
+    try {
+      return JSON.parse(trimmed).map((c) => ({
+        code: String(c.code || '').trim(), grade: String(c.gradeLevel || c.grade || '').trim(),
+        subject: String(c.subject || '').trim(), description: String(c.description || '').trim(),
+        quarter: String(c.quarterTerm || c.quarter || '').trim(),
+      }));
+    } catch { return []; }
+  }
+  return trimmed.split('\n').map((line) => line.trim()).filter(Boolean).map((line) => {
+    const cells = line.split(',').map((x) => x.trim().replace(/^"|"$/g, ''));
+    // Skip a header row.
+    if (/^code$/i.test(cells[0] || '')) return null;
+    return { code: cells[0], grade: cells[1], subject: cells[2], description: cells.slice(3, -1).join(',') || cells[3], quarter: cells[cells.length - 1] };
+  }).filter(Boolean);
+}
+
+function safeName(title) {
+  return title.replace(/[^a-z0-9-_ ]/gi, '').trim().replace(/\s+/g, '-') || 'document';
+}

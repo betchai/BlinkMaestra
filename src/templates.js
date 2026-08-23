@@ -1,0 +1,68 @@
+export function seedTemplates() {
+  return [
+    {
+      id: 'ilaw', name: 'ILAW Lesson Plan', capability: 'Lesson Planning',
+      description: 'DepEd ILAW framework (D.O. 016, s. 2026): Intentions, Learning Experience, Assessing Learning, Ways Forward — with Declaration of AI Use.',
+      requiredFields: ['Learning competency', 'Topic / competency', 'Term'],
+      optionalFields: ['Week', 'Grade level', 'Duration', 'Teaching strategy', 'Number of sessions'],
+      outputStructure: ['Header Information', 'I – Intentions', 'L – Learning Experience', 'A – Assessing Learning', 'W – Ways Forward', 'Declaration of AI Use'],
+      version: '2.0', active: true,
+    },
+    {
+      id: 'assessment', name: 'Assessment with Answer Key', capability: 'Classroom Assessment',
+      description: 'Assessment, answer key, and scoring guide.',
+      requiredFields: ['Topic / competency', 'Assessment type'],
+      optionalFields: ['Number of items', 'Duration'],
+      outputStructure: ['Directions', 'Items', 'Answer Key', 'Scoring Guide'],
+      version: '1.0', active: true,
+    },
+    {
+      id: 'activity-sheet', name: 'Activity Sheet', capability: 'Learning Materials',
+      description: 'Learner-facing activity sheet with instructions and exercises.',
+      requiredFields: ['Topic / competency'],
+      optionalFields: ['Grade level', 'Duration', 'Available resources'],
+      outputStructure: ['Title', 'Instructions', 'Activities', 'Reflection Questions'],
+      version: '1.0', active: true,
+    },
+    {
+      id: 'parent-advisory', name: 'Parent Advisory', capability: 'Parent Communication',
+      description: 'Clear, warm communication to parents or guardians.',
+      requiredFields: ['Purpose', 'Key message'],
+      optionalFields: ['Recipient', 'Tone', 'Date and venue'],
+      outputStructure: ['Greeting', 'Body', 'Action Requested', 'Closing'],
+      version: '1.0', active: true,
+    },
+    {
+      id: 'accomplishment-report', name: 'Accomplishment Report', capability: 'School Documentation',
+      description: 'Structured narrative of accomplishments with results and support needs.',
+      requiredFields: ['Reporting period', 'Key accomplishments'],
+      optionalFields: ['Evidence', 'Area for support'],
+      outputStructure: ['Introduction', 'Accomplishments', 'Results', 'Areas for Support'],
+      version: '1.0', active: true,
+    },
+    {
+      id: 'ppst-reflection', name: 'PPST Reflection', capability: 'Professional Growth',
+      description: 'Reflective write-up anchored on a PPST domain provided by the teacher.',
+      requiredFields: ['Reflection focus', 'PPST domain'],
+      optionalFields: ['Evidence'],
+      outputStructure: ['Focus', 'Narrative', 'Evidence', 'Next Steps'],
+      version: '1.0', active: true,
+    },
+    {
+      id: 'classroom-plan', name: 'Classroom Management Plan', capability: 'Classroom Management',
+      description: 'Classroom routines, rules, and intervention strategies.',
+      requiredFields: ['Classroom context'],
+      optionalFields: ['Grade level', 'Area for support'],
+      outputStructure: ['Routines', 'Rules', 'Strategies', 'Interventions'],
+      version: '1.0', active: true,
+    },
+    {
+      id: 'program-plan', name: 'Program Activity Plan', capability: 'School Programs',
+      description: 'School program or activity plan with participants and expected outputs.',
+      requiredFields: ['Program name', 'Date and venue'],
+      optionalFields: ['Participants', 'Expected output'],
+      outputStructure: ['Overview', 'Activities', 'Participants', 'Expected Outputs'],
+      version: '1.0', active: true,
+    },
+  ];
+}
