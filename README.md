@@ -112,16 +112,22 @@ When SMTP is **not** configured, the app logs a clickable link to stdout instead
 
 ## Deployment
 
-A **Render blueprint** (`render.yaml`) is included. It deploys the app as a single Node web service backed by a **managed PostgreSQL database** (the app's datastore), with an `APP_URL` for building email links, and secret placeholders (`sync: false`) for the SMTP and AI credentials. A legacy persistent disk is also mounted for the JSON fallback path.
+A **Render blueprint** (`render.yaml`) is included. It deploys the app as a single Node web service on Render's **free tier (no credit card required)**, with a persistent disk (`.data/`) holding the app's datastore. You set the SMTP and AI credentials as environment secrets.
+
+Why Render (and not Vercel)? This app is a long-running Node server: AI **generation runs as an in-process background job** that the client polls, and state lives in an in-memory cache backed by a JSON file / Postgres. Vercel's serverless model gives each request its own short-lived process, so in-process jobs and the JSON cache don't survive between requests — generation-with-progress and durable storage both need real rework to work there. Render's always-on web service matches the current architecture, so it deploys unchanged.
 
 Deploy steps:
 1. Push this repo to GitHub.
-2. In Render: **New → Blueprint** → select the repo. The blueprint provisions the Postgres database and wires `DATABASE_URL` automatically.
+2. In Render: **New → Blueprint** → select the repo. The blueprint provisions a free web service with a persistent disk, no card needed.
 3. In the service's **Environment** tab, set the secrets:
    - `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` (Gmail App Password, or any SMTP)
    - `APP_URL` (the `https://…` URL Render assigns the service)
    - `OPENCODE_API_KEY` or `OPENAI_API_KEY` (+ `AI_BASE_URL`/`AI_MODEL`), or set these in-app after the first deploy.
 4. Payment is **off** by default. When you're ready to monetize, turn it on in **Admin → Payments & subscriptions** (or set `PAYMENTS_ENABLED=true`).
+
+Free-tier limits to know: the service **spins down after ~15 min idle** (takes ~1 min to wake), and you get **750 instance-hours/month**. That's fine for an internal teacher tool but not for heavy public traffic.
+
+To move to production later: set the web service to `starter` (always on) and add a managed **PostgreSQL** database, setting `DATABASE_URL` to it. The app transparently switches from the JSON datastore to Postgres (single JSONB row) whenever `DATABASE_URL` is set — see [Storage](#storage-postgresql-recommended-or-local-json).
 
 The render blueprint defaults to the Gmail SMTP host/port. Any SMTP provider can be used by adjusting `SMTP_HOST`/`SMTP_PORT`/`SMTP_SECURE`. Google sometimes blocks SMTP from cloud/datacenter IPs — if Gmail fails in production, use a transactional provider (Brevo/Resend/SMTP2GO) which is a simple env change in `src/mail.js`.
 

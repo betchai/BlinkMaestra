@@ -1,23 +1,29 @@
-# BLinkMaestra (DepEd Teacher Copilot) — Render Blueprint
+# BLinkMaestra (DepEd Teacher Copilot) — Render Blueprint (FREE, no credit card)
 # Deploy: connect GitHub repo (betchai/BlinkMaestra) → New → Blueprint
 #
-# Single Node web service backed by a managed PostgreSQL database. The workspace
-# state is stored as a single JSONB row in Postgres, which is durable and
-# backup-able. The legacy persistent-disk JSON path (DATA_DIR) is still supported
-# as a fallback when DATABASE_URL is unset.
+# This blueprint uses Render's FREE tier, which requires NO credit card:
+#   - Web service: plan `free` (512 MB RAM, spins down after ~15 min idle, ~1 min cold start)
+#   - Storage: a persistent disk holds the JSON datastore (.data/copilot.json). On free
+#     tier this is MORE durable than Render's free Postgres, which expires after 30 days
+#     and then deletes all data.
 #
-# Estimated cost: Postgres Basic ~$7/mo + web service ~$7/mo on Starter (always on).
-
-databases:
-  - name: blinkmaestra-db
-    plan: basic-256mb # or: free (arm64) — basic recommended for durability
-    databaseName: blinkmaestra
+# Free-tier trade-offs to know:
+#   - The site sleeps after 15 min without traffic and takes ~1 min to wake (acceptable
+#     for an internal teacher tool; not ideal for a public site).
+#   - 750 free instance-hours per month. Heavy use can suspend the service until the
+#     next month.
+#
+# Paid upgrade path (remove the card blocker later, when you're ready):
+#   - Web service: starter (~$7/mo, always on, no spin-down).
+#   - Storage: add a managed PostgreSQL (basic-256mb ~$7/mo) and set DATABASE_URL to it.
+#     Postgres gives durable, backup-able storage and removes the single-instance disk
+#     limit. The app transparently uses Postgres whenever DATABASE_URL is set.
 
 services:
   - type: web
     name: blinkmaestra
     runtime: node
-    plan: starter # or: free
+    plan: free
     buildCommand: npm install
     startCommand: node server.js
     healthCheckPath: /
@@ -27,12 +33,9 @@ services:
         value: production
       - key: PORT
         value: 10000
-      # Point the app at the managed Postgres database created above.
-      - key: DATABASE_URL
-        fromDatabase:
-          name: blinkmaestra-db
-          property: connectionString
-      # Legacy JSON fallback if DATABASE_URL is removed:
+      # Storage directory = the persistent disk mounted below. The app stores its
+      # whole state here as .data/copilot.json. (Remove this + set DATABASE_URL if
+      # you upgrade to a paid managed Postgres.)
       - key: DATA_DIR
         value: /var/data
       # Billing: master switch (OFF by default so teachers test free). Flip via the
@@ -43,7 +46,9 @@ services:
         value: "5"
       - key: BILLING_PER_MONTH
         value: "100"
-      # GCash number where teachers send payment — change to your own:
+      # GCash number where teachers send payment — change to your own. This is NOT a
+      # payment credential: it's just the number the app displays to teachers. Payment
+      # is manual (teacher pays you via GCash, you approve their order in-app).
       - key: BILLING_GCASH
         value: "09299865338"
       # AI provider: set one of these in the Render dashboard (secret) as a bootstrap
@@ -62,7 +67,7 @@ services:
       # Any email here is granted the admin role (default bootstrap: betchay.canyas@gmail.com)
       - key: ADMIN_EMAILS
         sync: false
-      # SMTP for magic-link / password-reset emails.
+      # SMTP for magic-link / password-reset / billing-approval emails.
       # Gmail (free, personal): SMTP_USER=your Gmail, SMTP_PASS=Google App Password
       # (not your login password), SMTP_FROM=your Gmail. Set these as Render secrets.
       - key: SMTP_HOST
@@ -80,8 +85,8 @@ services:
       - key: APP_URL
         sync: false
 
-    # Legacy persistent disk for the JSON datastore fallback (only used if
-    # DATABASE_URL is unset). Can be removed once fully on Postgres.
+    # Persistent disk for the JSON datastore (free tier storage). Persists across
+    # restarts and deploys for as long as the service exists.
     disk:
       name: data
       mountPath: /var/data
