@@ -12,16 +12,18 @@ function go(route) {
 }
 
 // ---------- Auth ----------
-function authScreen(mode = 'login') {
+function authScreen(mode = 'login', prefillToken = '') {
   const isReset = mode === 'reset';
   const isConfirm = mode === 'confirm';
-  const title = mode === 'register' ? 'Create your account' : isReset ? 'Reset your password' : isConfirm ? 'Choose a new password' : 'Welcome back';
+  const isMagic = mode === 'magic';
+  const title = mode === 'register' ? 'Create your account' : isMagic ? 'Sign in with email' : isReset ? 'Reset your password' : isConfirm ? 'Choose a new password' : 'Welcome back';
   const formHtml =
     mode === 'login'
       ? `${field('Email', `<input type="email" id="f-email" required autocomplete="email">`)}
          ${field('Password', `<input type="password" id="f-password" required autocomplete="current-password">`)}
          <button class="button" type="submit" style="width:100%">Sign in</button>
-         <div class="form-actions"><button type="button" class="button ghost" data-mode="register">Create an account</button>
+         <div class="form-actions"><button type="button" class="button ghost" data-mode="magic">Send me a sign-in link</button>
+         <button type="button" class="button ghost" data-mode="register">Create an account</button>
          <button type="button" class="button ghost" data-mode="reset">Forgot password?</button></div>`
       : mode === 'register'
         ? `${field('Full name', `<input id="f-name" autocomplete="name">`)}
@@ -30,12 +32,17 @@ function authScreen(mode = 'login') {
            <p class="notice">Use at least 8 characters.</p>
            <button class="button" type="submit" style="width:100%">Create account</button>
            <div class="form-actions"><button type="button" class="button ghost" data-mode="login">I already have an account</button></div>`
+        : isMagic
+          ? `${field('Email', `<input type="email" id="f-email" required autocomplete="email">`)}
+             <p class="notice">We'll email you a secure sign-in link. No password needed.</p>
+             <button class="button" type="submit" style="width:100%">Send sign-in link</button>
+             <div class="form-actions"><button type="button" class="button ghost" data-mode="login">Use a password instead</button></div>`
         : isReset
           ? `${field('Email', `<input type="email" id="f-email" required>`)}<p class="notice">If the account exists, a reset link will be issued. Ask your administrator for access in this environment.</p>
              <button class="button" type="submit" style="width:100%">Send reset request</button>
              <div class="form-actions"><button type="button" class="button ghost" data-mode="login">Back to sign in</button></div>`
           : `${field('New password', `<input type="password" id="f-password" required minlength="8">`)}
-             ${field('Reset token', `<input id="f-token" required>`, true)}
+             ${field('Reset token', `<input id="f-token" required value="${esc(prefillToken)}">`, true)}
              <button class="button" type="submit" style="width:100%">Set new password</button>
              <div class="form-actions"><button type="button" class="button ghost" data-mode="login">Back to sign in</button></div>`;
 
@@ -45,6 +52,8 @@ function authScreen(mode = 'login') {
       <div class="brand" style="margin-bottom:18px;color:var(--forest)"><span class="brand-mark">B</span><div><strong style="color:var(--ink)">BLinkMaestra</strong><small>Your teaching copilot</small></div></div>
       <h1 style="font:700 24px Fraunces,serif;margin:0 0 16px">${title}</h1>
       <form id="auth-form">${formHtml}</form>
+
+      ${isMagic ? `<div id="magic-status" class="card-copy" style="display:none;margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:12px"></div>` : ''}
     </div></div>`);
   app.appendChild(page);
 
@@ -59,6 +68,12 @@ function authScreen(mode = 'login') {
       } else if (mode === 'register') {
         const r = await api.register({ name: v('f-name'), email: v('f-email'), password: v('f-password') });
         state.user = r.user; state.profile = r.profile;
+      } else if (mode === 'magic') {
+        const r = await api.requestMagicLink(v('f-email'));
+        const box = document.getElementById('magic-status');
+        box.style.display = 'block';
+        box.innerHTML = `<strong>Check your email.</strong> ${esc(r.message || 'A sign-in link was issued.')}`;
+        return;
       } else if (mode === 'reset') {
         await api.requestReset(v('f-email'));
         toast('If that account exists, a reset was issued. Check with your administrator.');
@@ -1036,13 +1051,26 @@ async function adminView(root) {
   if (ov.error) { root.innerHTML = `<div class="card"><p class="card-copy">${esc(ov.error)}</p></div>`; return; }
 
   root.innerHTML = `<p class="eyebrow">Administration</p><h1 class="title">System management</h1>
-    <p class="subtitle">Manage the competency library, knowledge references, and templates. Changes apply to all teachers.</p>
+    <p class="subtitle">Manage the competency library, knowledge references, the AI provider, and templates. Changes apply to all teachers.</p>
     <div class="stat-grid">
       <div class="stat"><span>Users</span><strong>${ov.users}</strong></div>
       <div class="stat"><span>Competencies</span><strong>${ov.competencyCount}</strong></div>
       <div class="stat"><span>Templates</span><strong>${ov.templates.length}</strong></div>
       <div class="stat"><span>Custom knowledge</span><strong>${ov.knowledge.length}</strong></div>
     </div>
+
+    <section class="card" style="margin-bottom:20px"><div class="card-heading"><h2>AI provider configuration</h2></div>
+      <p class="card-copy">Set the AI key(s) used for generation. If <code>opencodeKey</code> is set, OpenCode Zen is used; otherwise <code>openaiKey</code> (or any OpenAI-compatible endpoint via the base URL). Keys are stored encrypted-config here and never sent to the browser.</p>
+      <form id="adm-aiform" style="margin-top:8px">
+        ${field('OpenCode Zen API key', `<input id="ai-opencode" type="password" placeholder="occ_... ">`, true)}
+        ${field('OpenAI (or compatible) API key', `<input id="ai-openai" type="password" placeholder="sk-...">`, true)}
+        <div class="form-row">
+          ${field('Base URL (optional)', `<input id="ai-baseurl" placeholder="https://api.openai.com/v1">`, true)}
+          ${field('Model (optional)', `<input id="ai-model" placeholder="gpt-4.1-mini">`, true)}
+        </div>
+        <p class="card-copy" id="ai-status" style="margin-top:4px"></p>
+        <button class="button" type="submit" style="margin-top:8px">Save AI configuration</button>
+      </form></section>
 
     <section class="card" style="margin-bottom:20px"><div class="card-heading"><h2>Import learning competencies</h2></div>
       <p class="card-copy">Paste JSON or CSV rows. CSV format: <code>code, grade, subject, description, quarter</code> — one per line. Duplicates by code are skipped.</p>
@@ -1088,6 +1116,38 @@ S6MT-Ia-c-1, Grade 6, Science, Describe mixtures and compounds, Q1'></textarea>
       if (resp.ok) root.querySelector('#adm-import').value = '';
     } catch { out.textContent = 'Import failed. Please try again.'; }
     importBtn.disabled = false;
+  });
+
+  // Load current AI config (left blank unless a key is already set; masked values shown).
+  (async () => {
+    try {
+      const cfg = await api.aiConfig(true);
+      const s = cfg.ai || {};
+      if (s.opencodeKey) root.querySelector('#ai-opencode').value = s.opencodeKey;
+      if (s.openaiKey) root.querySelector('#ai-openai').value = s.openaiKey;
+      root.querySelector('#ai-baseurl').value = s.baseUrl || '';
+      root.querySelector('#ai-model').value = s.model || '';
+      const envNote = (cfg.effectiveEnv?.opencode ? 'OpenCode key present in server env; ' : '')
+        + (cfg.effectiveEnv?.openai ? 'OpenAI key present in server env.' : '');
+      root.querySelector('#ai-status').textContent = envNote || 'No AI key is configured yet.';
+    } catch { /* admin form is optional */ }
+  })();
+
+  root.querySelector('#adm-aiform').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    root.querySelector('#adm-aiform button[type=submit]').disabled = true;
+    try {
+      await api.saveAiConfig({
+        opencodeKey: root.querySelector('#ai-opencode').value,
+        openaiKey: root.querySelector('#ai-openai').value,
+        baseUrl: root.querySelector('#ai-baseurl').value,
+        model: root.querySelector('#ai-model').value,
+      });
+      toast('AI configuration saved.');
+    } catch (err) {
+      toast(err.message);
+    }
+    root.querySelector('#adm-aiform button[type=submit]').disabled = false;
   });
 
   const toggle = async (url, bodyData) => {
@@ -1157,6 +1217,14 @@ async function render() {
 }
 
 // ---------- Init ----------
+async function completeAuth(r) {
+  state.user = r.user;
+  state.profile = r.profile;
+  state.capabilities = await api.capabilities();
+  if (!state.profile.onboardingComplete) return onboardingScreen(0);
+  go({ name: 'dashboard' });
+}
+
 (async function init() {
   try {
     const me = await api.me();
@@ -1166,6 +1234,23 @@ async function render() {
     if (!state.profile.onboardingComplete) return onboardingScreen(0);
     go({ name: 'dashboard' });
   } catch {
+    // A magic sign-in link arrives as #magic=<token>. Verify it to create a session.
+    const magic = (location.hash || '').match(/#magic=([^&]+)/);
+    if (magic) {
+      try {
+        const r = await api.verifyMagicLink(decodeURIComponent(magic[1]));
+        history.replaceState(null, '', location.pathname);
+        return completeAuth(r);
+      } catch (err) {
+        toast(err.message);
+      }
+    }
+    // A password reset link arrives as #reset=<token>. Prefill the confirm screen.
+    const resetMatch = (location.hash || '').match(/#reset=([^&]+)/);
+    if (resetMatch) {
+      history.replaceState(null, '', location.pathname);
+      return authScreen('confirm', decodeURIComponent(resetMatch[1]));
+    }
     // Landing page links here with #register to go straight to account creation.
     authScreen(location.hash === '#register' ? 'register' : 'login');
   }

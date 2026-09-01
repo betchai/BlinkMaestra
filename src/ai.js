@@ -81,18 +81,26 @@ class OpenAiCompatibleProvider {
 
 let provider = null;
 
-export function getProvider() {
+// Configuration may come from admin-set settings (persisted in the DB, passed in)
+// or from server environment variables. Provider precedence: settings (opencode then
+// openai) → env vars → none. The admin-set opencodeKey/openaiKey win over env because
+// the admin-configured store is the way the app is managed in production.
+export function getProvider(settings = {}) {
   if (!provider) {
-    // Prefer OpenCode Zen when its key is present; fall back to OpenAI.
-    const name = process.env.OPENCODE_API_KEY ? 'opencode' : process.env.OPENAI_API_KEY ? 'openai' : null;
+    const s = settings.ai || {};
+    const name = s.opencodeKey ? 'opencode' : s.openaiKey
+      ? 'openai'
+      : process.env.OPENCODE_API_KEY ? 'opencode' : process.env.OPENAI_API_KEY ? 'openai' : null;
     if (!name) {
       throw Object.assign(new Error('AI generation is not configured yet. Ask your administrator to configure the secure AI service.'), { status: 503 });
     }
     const preset = PROVIDERS[name];
     provider = new OpenAiCompatibleProvider({
-      apiKey: process.env[preset.keyEnv],
-      baseUrl: process.env.AI_BASE_URL || preset.baseUrl,
-      model: process.env.AI_MODEL || preset.model,
+      apiKey: name === 'opencode'
+        ? (s.opencodeKey || process.env.OPENCODE_API_KEY)
+        : (s.openaiKey || process.env.OPENAI_API_KEY),
+      baseUrl: s.baseUrl || process.env.AI_BASE_URL || preset.baseUrl,
+      model: s.model || process.env.AI_MODEL || preset.model,
     });
   }
   return provider;

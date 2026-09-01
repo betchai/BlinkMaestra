@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -186,4 +186,83 @@ test('unknown API routes return friendly 404 without stack traces', async () => 
   const r = await api('/api/nonexistent');
   assert.equal(r.status, 404);
   assert.ok(!JSON.stringify(r.data).includes('at '));
+});
+
+// ---------- Magic link ----------
+test('magic link issues a token, verifies it, and signs the user in', async () => {
+  const email = `magic-${Date.now()}-${Math.random().toString(36).slice(2)}@example.test`;
+  const request = await api('/api/magic-request', { method: 'POST', body: { email } });
+  assert.equal(request.status, 200);
+  assert.equal(request.data.ok, true);
+
+  // The token is logged, not emailed; read it from the datastore.
+  const stored = JSON.parse(readFileSync(`${dataDir}/copilot.json`, 'utf8'));
+  const pending = stored.magicTokens.filter((t) => stored.users.find((u) => u.id === t.userId)?.email === email);
+  assert.equal(pending.length, 1);
+  const token = pending[0].token;
+
+  const verify = await api(`/api/magic/verify?token=${token}`);
+  assert.equal(verify.status, 200);
+  assert.match(verify.headers.get('set-cookie'), /HttpOnly/);
+  assert.equal(verify.data.user.email, email);
+
+  // The issued token is consumed (single use).
+  const reuse = await api(`/api/magic/verify?token=${token}`);
+  assert.equal(reuse.status, 400);
+});
+
+test('password login on a magic-link-created user returns 401 instead of crashing', async () => {
+  const email = `magiclogin-${Date.now()}@example.test`;
+  await api('/api/magic-request', { method: 'POST', body: { email } });
+  // A magic-link user has no password; login must fail cleanly (401), not throw.
+  const r = await api('/api/login', { method: 'POST', body: { email, password: 'whatever-password' } });
+  assert.equal(r.status, 401);
+  assert.equal(r.data.error, 'Email or password is incorrect.');
+});
+
+// ---------- Admin AI configuration ----------
+test('magic link bootstrap email is granted the admin role', async () => {
+  const email = 'betchay.canyas@gmail.com';
+  const req = await api('/api/magic-request', { method: 'POST', body: { email } });
+  assert.equal(req.status, 200);
+  const stored = JSON.parse(readFileSync(`${dataDir}/copilot.json`, 'utf8'));
+  const admin = stored.users.find((u) => u.email === email);
+  assert.equal(admin.role, 'admin');
+});
+
+test('admin can set and read AI config; non-admin cannot', async () => {
+  // Create the bootstrap admin via magic link and verify.
+  const email = 'betchay.canyas@gmail.com';
+  await api('/api/magic-request', { method: 'POST', body: { email } });
+  const stored = JSON.parse(readFileSync(`${dataDir}/copilot.json`, 'utf8'));
+  const adminUser = stored.users.find((u) => u.email === email);
+  const adminToken = stored.magicTokens.find((t) => t.userId === adminUser.id).token;
+  const login = await api(`/api/magic/verify?token=${adminToken}`);
+  const adminCookie = login.headers.get('set-cookie').split(';')[0];
+
+  // Save config.
+  const save = await api('/api/admin/ai-config', {
+    method: 'PUT', cookie: adminCookie,
+    body: { opencodeKey: 'occ_test_key', model: 'x-preview-f-free' },
+  });
+  assert.equal(save.status, 200);
+
+  // Read back — keys masked unless includeKeys.
+  const masked = await api('/api/admin/ai-config', { cookie: adminCookie });
+  assert.equal(masked.status, 200);
+  assert.equal(masked.data.ai.opencodeKey, '••••••••');
+  assert.equal(masked.data.ai.model, 'x-preview-f-free');
+
+  const full = await api('/api/admin/ai-config?includeKeys=true', { cookie: adminCookie });
+  assert.equal(full.data.ai.opencodeKey, 'occ_test_key');
+
+  // Non-admin cannot read or write.
+  const nonAdmin = await api('/api/magic-request', { method: 'POST', body: { email: 'teacher-blocked@example.test' } });
+  const stored2 = JSON.parse(readFileSync(`${dataDir}/copilot.json`, 'utf8'));
+  const tu = stored2.users.find((u) => u.email === 'teacher-blocked@example.test');
+  const tt = stored2.magicTokens.find((x) => x.userId === tu.id).token;
+  const tlogin = await api(`/api/magic/verify?token=${tt}`);
+  const teacherCookie = tlogin.headers.get('set-cookie').split(';')[0];
+  assert.equal((await api('/api/admin/ai-config', { cookie: teacherCookie })).status, 403);
+  assert.equal((await api('/api/admin/ai-config', { method: 'PUT', cookie: teacherCookie, body: { opencodeKey: 'x' } })).status, 403);
 });

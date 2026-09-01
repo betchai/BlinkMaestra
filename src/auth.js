@@ -1,8 +1,10 @@
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { db, save, audit } from './db.js';
+import { sendEmail, appBaseUrl } from './mail.js';
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
 const RESET_TTL_MS = 1000 * 60 * 30;
+const MAGIC_TTL_MS = 1000 * 60 * 10;
 
 function hash(password, salt = randomBytes(16).toString('hex')) {
   return { salt, hash: scryptSync(password, salt, 64).toString('hex') };
@@ -28,8 +30,13 @@ export function publicUser(u) {
 }
 
 // Emails listed in ADMIN_EMAILS (comma-separated) are granted the admin role.
+// betchay.canyas@gmail.com is added as a bootstrap admin so the app is playable
+// out of the box; administrators can change this later.
+const DEFAULT_ADMIN_EMAILS = 'betchay.canyas@gmail.com';
+
 function isAdminEmail(email) {
-  const list = String(process.env.ADMIN_EMAILS || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const list = (DEFAULT_ADMIN_EMAILS + ',' + (process.env.ADMIN_EMAILS || '')).split(',')
+    .map((x) => x.trim().toLowerCase()).filter(Boolean);
   return list.includes(String(email).toLowerCase());
 }
 
@@ -101,7 +108,8 @@ export async function register({ name, email, password }) {
 export async function login({ email, password }) {
   const data = await db();
   const user = data.users.find((x) => x.email === String(email || '').toLowerCase());
-  if (!user || !verify(password || '', user)) {
+  // Users created via magic link have no password; password login must not crash.
+  if (!user || !user.salt || !user.passwordHash || !verify(password || '', user)) {
     throw Object.assign(new Error('Email or password is incorrect.'), { status: 401 });
   }
   applyRole(user); // promote/demote to match current ADMIN_EMAILS configuration
@@ -126,8 +134,18 @@ export async function requestPasswordReset(email) {
   const token = randomBytes(24).toString('hex');
   data.resetTokens.push({ token, userId: user.id, expiresAt: new Date(Date.now() + RESET_TTL_MS).toISOString() });
   await save(data);
-  // In production this token is emailed. In this environment it is logged for the operator.
-  console.log(`[password-reset] token for ${user.email}: ${token}`);
+  const link = `${appBaseUrl()}/app#reset=${token}`;
+  await sendEmail({
+    to: user.email,
+    subject: 'Reset your BLinkMaestra password',
+    html: `<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+      <h2 style="color:#0b5e55">Reset your password</h2>
+      <p>Click the button below to set a new password. This link expires in 30 minutes and works once.</p>
+      <p><a href="${link}" style="display:inline-block;background:#0b5e55;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Reset your password</a></p>
+      <p>If the button doesn't work, copy this link into your browser:<br><a href="${link}" style="color:#0b5e55">${link}</a></p>
+      <p>If you didn't request this, you can ignore this email.</p>
+    </div>`,
+  });
   return { ok: true };
 }
 
@@ -148,4 +166,68 @@ export async function resetPassword({ token, password }) {
   await audit(data, user.id, 'password-reset');
   await save(data);
   return { ok: true };
+}
+
+// ---------- Magic link auth ----------
+// Email-only sign in. A one-time link is issued; in this environment the link is
+// logged for the operator instead of emailed. Wiring an email provider swaps in here.
+
+export async function requestMagicLink(email) {
+  const clean = String(email || '').trim().toLowerCase();
+  if (!clean.includes('@')) {
+    throw Object.assign(new Error('Enter a valid email address.'), { status: 400 });
+  }
+  const data = await db();
+  let user = data.users.find((x) => x.email === clean);
+  if (!user) {
+    user = {
+      id: randomUUID(),
+      email: clean,
+      name: '',
+      createdAt: new Date().toISOString(),
+    };
+    data.users.push(user);
+    data.profiles.push({
+      userId: user.id,
+      onboardingComplete: false,
+      contextEnabled: true,
+      position: '', gradeLevels: [], subjects: [], school: '', division: '', region: '',
+      language: 'English', documentFormat: 'DepEd standard', duration: '', preferences: '',
+    });
+    applyRole(user);
+  }
+  // Invalidates any earlier unused magic links for the same user.
+  data.magicTokens = data.magicTokens.filter((t) => t.userId !== user.id);
+  const token = randomBytes(24).toString('hex');
+  data.magicTokens.push({ token, userId: user.id, expiresAt: new Date(Date.now() + MAGIC_TTL_MS).toISOString() });
+  await save(data);
+  // Report the link to the browser for local/fallback use, then deliver it by email.
+  const link = `${appBaseUrl()}/app#magic=${token}`;
+  await sendEmail({
+    to: user.email,
+    subject: 'Your sign-in link for BLinkMaestra',
+    html: `<div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto">
+      <h2 style="color:#0b5e55">Sign in to BLinkMaestra</h2>
+      <p>Hi, click the button below to sign in. This link expires in 10 minutes and works once.</p>
+      <p><a href="${link}" style="display:inline-block;background:#0b5e55;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Sign in to BLinkMaestra</a></p>
+      <p>If the button doesn't work, copy this link into your browser:<br><a href="${link}" style="color:#0b5e55">${link}</a></p>
+      <p>If you didn't request this, you can ignore this email.</p>
+    </div>`,
+  });
+  return { ok: true, delivered: true, link };
+}
+
+export async function verifyMagicLink(token) {
+  const data = await db();
+  const record = token
+    ? data.magicTokens.find((r) => r.token === token && new Date(r.expiresAt) > new Date())
+    : null;
+  if (!record) throw Object.assign(new Error('This sign-in link is invalid or has expired. Request a new one.'), { status: 400 });
+  const user = data.users.find((u) => u.id === record.userId);
+  if (!user) throw Object.assign(new Error('This sign-in link is invalid or has expired. Request a new one.'), { status: 400 });
+  data.magicTokens.splice(data.magicTokens.indexOf(record), 1);
+  applyRole(user); // promote/demote to match current ADMIN_EMAILS configuration
+  await save(data);
+  const profile = data.profiles.find((x) => x.userId === user.id);
+  return { user, token: await createSession(user.id), profile };
 }

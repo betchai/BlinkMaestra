@@ -76,8 +76,8 @@ function extractJson(raw) {
   throw new SyntaxError('no JSON found');
 }
 
-async function callProvider({ capability, context, profile, refs }) {
-  const provider = getProvider();
+async function callProvider({ capability, context, profile, refs, settings }) {
+  const provider = getProvider(settings);
   const { raw, usage } = await provider.generate({
     instructions: systemInstructions(capability, profile, refs),
     input: `Return a JSON object for this workflow using the structured teacher inputs: ${JSON.stringify(context)}`,
@@ -92,7 +92,7 @@ async function callProvider({ capability, context, profile, refs }) {
   return parsed;
 }
 
-export async function runGeneration({ capability, requestedCapability, context = {}, profile = {}, knowledgeStore = [], onStage = () => {} }) {
+export async function runGeneration({ capability, requestedCapability, context = {}, profile = {}, knowledgeStore = [], settings = {}, onStage = () => {} }) {
   // Stage 1: intent detection / capability routing
   onStage('Understanding your request');
   let resolved = capability || null;
@@ -108,13 +108,13 @@ export async function runGeneration({ capability, requestedCapability, context =
 
   // Stage 3-4: generation + validation with one retry on validation failure
   onStage('Generating content — the AI model is writing');
-  let result = await callProvider({ capability: resolved, context, profile, refs });
+  let result = await callProvider({ capability: resolved, context, profile, refs, settings });
   onStage('Checking the result');
   let check = validate(result);
   if (!check.ok) {
     console.warn('[pipeline] validation issues, retrying once:', check.issues);
     onStage('Checking found gaps — regenerating');
-    result = await callProvider({ capability: resolved, context: { ...context, previousIssues: check.issues }, profile, refs });
+    result = await callProvider({ capability: resolved, context: { ...context, previousIssues: check.issues }, profile, refs, settings });
     check = validate(result);
   }
   onStage('Preparing your document');

@@ -37,11 +37,36 @@ AI_BASE_URL="https://other-provider/v1" AI_MODEL="model-name" OPENAI_API_KEY="ke
 
 Runs on port 4173 (override with `PORT`). `npm test` runs the full API suite.
 
-OpenCode Zen is used automatically when `OPENCODE_API_KEY` is set (base `https://opencode.ai/zen/v1`, model `x-preview-f-free` — Ox Alpha Free). The key lives only in the server process; the browser never sees it.
+OpenCode Zen is used automatically when `OPENCODE_API_KEY` is set (base `https://opencode.ai/zen/v1`, model `x-preview-f-free` — Ox Alpha Free). The key lives only in the server process; the browser never sees it. Admins can also set the AI key in-app (Admin → AI provider configuration), which takes precedence over these env vars.
+
+### Email (magic links & password reset)
+
+Magic-link and password-reset emails are sent over SMTP. Works with any SMTP provider (Gmail, Zoho, Brevo, SMTP2GO…). Configure via env vars:
+
+```bash
+SMTP_HOST="smtp.gmail.com"       # example: Gmail
+SMTP_PORT="465"
+SMTP_SECURE="true"               # implicit TLS (Gmail 465); use false for STARTTLS on 587
+SMTP_USER="you@gmail.com"        # your sender address
+SMTP_PASS="xxxx xxxx xxxx xxxx"  # Gmail App Password (see below)
+SMTP_FROM="BLinkMaestra <you@gmail.com>"
+APP_URL="http://localhost:4173"  # base URL used to build sign-in/reset links
+```
+
+**Gmail (free, personal — no work email needed):** `SMTP_PASS` must be a [Google App Password](https://myaccount.google.com/apppasswords), not your login password. Enable **2-Step Verification**, then create an App Password for "Mail" and paste the 16-char code. The sender (`SMTP_FROM`/`SMTP_USER`) is your Gmail address; recipients can be any email. Minor note: links in Gmail-sent mail may be wrapped, since Gmail delivers from your personal address.
+
+When SMTP is **not** configured, the app logs a clickable link to stdout instead, so everything still works locally:
+
+```
+[mail/fallback] to=you@example.com subject="Your sign-in link for BLinkMaestra"
+[mail/fallback] http://localhost:4173/app#magic=...
+```
 
 ## What is implemented
 
-- **Auth** — register/login/logout, forgot/reset password (reset token logged for the operator; wire to email in production), persistent HttpOnly sessions with expiry
+- **Auth** — email **magic-link sign-in** (password + register also supported). Request a link on the login screen and it's delivered to the inbox over SMTP. Persistent HttpOnly sessions with expiry.
+- **Roles** — `admin` and `teacher`. `betchay.canyas@gmail.com` is a bootstrap admin (email also configurable via the `ADMIN_EMAILS` env var). Admins see the Admin workspace and can set the AI keys in-app.
+- **Admin AI configuration** — admins set the AI provider keys from **Admin → AI provider configuration** without touching server env. Keys persist in the datastore, are masked in the API, and never reach the browser.
 - **Onboarding & profile** — 3-step skippable wizard; saved grade levels, subjects, school, division, region, language, duration, preferences; context can be disabled
 - **Guided input engine** — templates declare required fields; fields already known from the profile or inherited from a previous document are never asked again
 - **Capability routing** — `/api/route` maps natural-language requests ("create a 20-item quiz") to capabilities

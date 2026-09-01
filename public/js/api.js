@@ -25,6 +25,12 @@ export const api = {
   requestReset: (email) => request('/api/password-reset', { method: 'POST', body: { email } }),
   confirmReset: (p) => request('/api/password-reset/confirm', { method: 'POST', body: p }),
 
+  requestMagicLink: (email) => request('/api/magic-request', { method: 'POST', body: { email } }),
+  verifyMagicLink: (token) => request(`/api/magic/verify?token=${encodeURIComponent(token)}`),
+
+  aiConfig: (includeKeys = false) => request(`/api/admin/ai-config${includeKeys ? '?includeKeys=true' : ''}`),
+  saveAiConfig: (p) => request('/api/admin/ai-config', { method: 'PUT', body: p }),
+
   documents: () => request('/api/documents').then((r) => r.documents),
   document: (id) => request(`/api/documents/${id}`).then((r) => r.document),
   createDocument: (p) => request('/api/documents', { method: 'POST', body: p }).then((r) => r.document),

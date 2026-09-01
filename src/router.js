@@ -79,6 +79,21 @@ export async function handleApi(req, res, pathname) {
     return send(res, 200, { ok: true });
   }
 
+  // ---------- Magic link auth ----------
+  if (pathname === '/api/magic-request' && method === 'POST') {
+    const p = await body(req);
+    await auth.requestMagicLink(p.email);
+    // Always succeed outwardly to avoid account enumeration.
+    return send(res, 200, { ok: true, message: 'If that account exists, a sign-in link was issued.' });
+  }
+
+  if (pathname === '/api/magic/verify' && method === 'GET') {
+    const url = new URL(req.url, 'http://x');
+    const token = url.searchParams.get('token') || '';
+    const { user, token: sessionToken, profile } = await auth.verifyMagicLink(token);
+    return send(res, 200, { user: auth.publicUser(user), profile }, { 'set-cookie': auth.sessionCookie(sessionToken) });
+  }
+
   if (pathname === '/api/me' && method === 'GET') {
     const id = await requireUser(req, res); if (!id) return;
     const data = await db();
@@ -135,6 +150,42 @@ export async function handleApi(req, res, pathname) {
       competencyCount: data.competencies.length,
       users: data.users.length,
     });
+  }
+
+  // ---------- Admin AI configuration ----------
+  // GET returns the current provider config (keys are masked by default so secrets
+  // never leak to the browser). Pass ?includeKeys=true to load keys into the edit form.
+  if (pathname === '/api/admin/ai-config' && method === 'GET') {
+    const id = await requireUser(req, res); if (!id) return;
+    const data = await db();
+    const user = data.users.find((u) => u.id === id);
+    if (!requireAdmin(user, res)) return;
+    const url = new URL(req.url, 'http://x');
+    const includeKeys = url.searchParams.get('includeKeys') === 'true';
+    const ai = { ...(data.settings.ai || {}) };
+    if (!includeKeys) {
+      ai.opencodeKey = ai.opencodeKey ? '••••••••' : '';
+      ai.openaiKey = ai.openaiKey ? '••••••••' : '';
+    }
+    return send(res, 200, { ai, effectiveEnv: { opencode: !!process.env.OPENCODE_API_KEY, openai: !!process.env.OPENAI_API_KEY } });
+  }
+
+  if (pathname === '/api/admin/ai-config' && method === 'PUT') {
+    const id = await requireUser(req, res); if (!id) return;
+    const data = await db();
+    const user = data.users.find((u) => u.id === id);
+    if (!requireAdmin(user, res)) return;
+    const p = await body(req);
+    const ai = data.settings.ai || {};
+    if (typeof p.opencodeKey === 'string') ai.opencodeKey = p.opencodeKey.trim();
+    if (typeof p.openaiKey === 'string') ai.openaiKey = p.openaiKey.trim();
+    if (typeof p.baseUrl === 'string') ai.baseUrl = p.baseUrl.trim();
+    if (typeof p.model === 'string') ai.model = p.model.trim();
+    data.settings.ai = ai;
+    await save(data);
+    const { resetProvider } = await import('./ai.js');
+    resetProvider();
+    return send(res, 200, { ok: true, ai });
   }
 
   if (pathname === '/api/admin/competencies/import' && method === 'POST') {
@@ -330,6 +381,7 @@ export async function handleApi(req, res, pathname) {
       context: p.context || {},
       profile,
       knowledgeStore: data.knowledge,
+      settings: data.settings,
       onStage: (stage) => { job.stage = stage; },
     }).then((result) => {
       job.result = result;
@@ -381,6 +433,7 @@ export async function handleApi(req, res, pathname) {
       },
       profile,
       knowledgeStore: data.knowledge,
+      settings: data.settings,
     });
     data.aiRequests.push({ id: randomUUID(), userId: id, capability: `Refinement (${p.instruction || 'improve'})`, createdAt: new Date().toISOString(), documentId: p.documentId || null, usage: null });
     await save(data);
