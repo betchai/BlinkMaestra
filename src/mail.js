@@ -17,6 +17,10 @@ const from = process.env.SMTP_FROM || '';
 let transporter = null;
 let transporterError = null;
 
+// Never let a stuck SMTP connection block a request: cap connect/greet/send waits
+// so cloud-hosted deployments (e.g. Render) fall back quickly instead of hanging.
+const SMTP_TIMEOUT_MS = 10_000;
+
 function getTransporter() {
   if (!host || !user || !pass) return null;
   if (!transporter && !transporterError) {
@@ -26,6 +30,9 @@ function getTransporter() {
         port,
         secure,
         auth: { user, pass },
+        connectionTimeout: SMTP_TIMEOUT_MS,
+        greetingTimeout: SMTP_TIMEOUT_MS,
+        socketTimeout: SMTP_TIMEOUT_MS,
       });
     } catch (err) {
       transporterError = err;
@@ -66,7 +73,12 @@ export async function sendEmail({ to, subject, html }) {
     const info = await sender.sendMail(mail);
     return { ok: true, mode: 'smtp', id: info.messageId };
   } catch (err) {
+    // Log the link anyway so the operator can complete the flow from the app logs
+    // when the mail provider is unreachable from the host (e.g. Gmail from Render).
+    const link = (html.match(/href="(https?:\/\/[^"]+)"/) || [])[1] || '(no link in email)';
     console.error('[mail] send failed:', err.message);
+    console.log(`[mail/fallback] to=${to} subject="${subject}"`);
+    console.log(`[mail/fallback] ${link}`);
     return { ok: false, mode: 'smtp', error: err.message };
   }
 }
