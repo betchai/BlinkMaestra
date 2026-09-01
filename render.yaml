@@ -82,6 +82,12 @@ services:
         sync: false
       - key: APP_URL
         sync: false
+      # Recovery bootstrap: while set, every admin email gets its password reset
+      # to this value on startup. Zero-dependency admin access on hosts without a
+      # shell (Render free tier). REMOVE after first sign-in or restarts will keep
+      # resetting the password.
+      - key: ADMIN_BOOTSTRAP_PASSWORD
+        sync: false
 
 databases:
   - name: blinkmaestra-db

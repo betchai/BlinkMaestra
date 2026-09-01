@@ -29,6 +29,46 @@ export function publicUser(u) {
   return { id: u.id, email: u.email, role: u.role, name: u.name, hasPassword: !!(u.passwordHash && u.salt) };
 }
 
+// Reads the comma-separated admin email list (env + built-in bootstrap).
+export function adminEmails() {
+  return [...new Set(
+    (DEFAULT_ADMIN_EMAILS + ',' + (process.env.ADMIN_EMAILS || '')).split(',')
+      .map((x) => x.trim().toLowerCase()).filter(Boolean)
+  )];
+}
+
+// Recovery path for hosts without a shell (e.g. Render free tier): when
+// ADMIN_BOOTSTRAP_PASSWORD is set, ensure every admin email has an account and
+// reset its password to that value on boot. Removes the email/one-off-script
+// dependency. Remove the env var after first sign-in so restarts don't reset it.
+export async function bootstrapAdmins() {
+  const password = process.env.ADMIN_BOOTSTRAP_PASSWORD || '';
+  if (password.length < 8) return;
+  const emails = adminEmails();
+  const data = await db();
+  for (const email of emails) {
+    let user = data.users.find((x) => x.email === email);
+    if (!user) {
+      user = { id: randomUUID(), email, name: '', createdAt: new Date().toISOString() };
+      data.users.push(user);
+      data.profiles.push({
+        userId: user.id,
+        onboardingComplete: false,
+        contextEnabled: true,
+        position: '', gradeLevels: [], subjects: [], school: '', division: '', region: '',
+        language: 'English', documentFormat: 'DepEd standard', duration: '', preferences: '',
+      });
+    }
+    const secured = hash(password);
+    user.passwordHash = secured.hash;
+    user.salt = secured.salt;
+    applyRole(user);
+    await audit(data, user.id, 'bootstrap-password');
+  }
+  await save(data);
+  console.log(`[auth/bootstrap] set admin password for: ${emails.join(', ')}`);
+}
+
 // Emails listed in ADMIN_EMAILS (comma-separated) are granted the admin role.
 // betchay.canyas@gmail.com is added as a bootstrap admin so the app is playable
 // out of the box; administrators can change this later.

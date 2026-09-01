@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { handleApi, send } from './src/router.js';
+import { bootstrapAdmins } from './src/auth.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(root, 'public');
@@ -42,3 +43,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => console.log(`BLinkMaestra running at http://localhost:${PORT}`));
+
+bootstrapAdmins().catch((err) => console.error('[auth/bootstrap] failed:', err && err.message));
