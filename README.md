@@ -10,34 +10,49 @@ BLinkMaestra is a workflow-first copilot for DepEd teachers: start from a profes
 server.js            HTTP entry + static file serving
 src/
   router.js          All API routes, rate limiting, error sanitization
-  auth.js            Registration, login/logout, password reset, persisted sessions
-  db.js              JSON datastore (users, profiles, sessions, documents,
-                     versions, aiRequests, feedback, auditLog, templates, knowledge)
+  auth.js            Magic-link & password auth, roles, persisted sessions
+  db.js              JSON datastore (users, profiles, sessions, tokens,
+                     documents, versions, aiRequests, feedback, auditLog,
+                     settings, templates, knowledge)
+  mail.js            SMTP delivery for magic links & password resets
   documents.js       Document lifecycle: CRUD, versions, trash/archive/duplicate
   pipeline.js        Generation pipeline: routing → knowledge → AI → validation
-  ai.js              Provider abstraction (OpenAI provider; swappable)
+  ai.js              Provider abstraction (OpenCode Zen / OpenAI-compatible/Groq)
   knowledge.js       Categorized knowledge retrieval (capability-aware)
   capabilities.js    Capability catalog, intent routing, related-work chains
   templates.js       Seeded guided-workflow templates
   export.js          Real DOCX (docx) and PDF (pdfkit) generation
 public/              Vanilla-JS SPA (guided input engine, editor with
                      contextual AI actions, autosave, versions, exports)
-tests/server.test.js 15 end-to-end API tests
+tests/server.test.js 19 end-to-end API tests
 ```
 
 ## Run locally
 
 ```bash
-OPENCODE_API_KEY="your-zen-key" npm start    # OpenCode Zen (default model: x-preview-f-free / Ox Alpha Free)
-# or OpenAI:
+npm install
+npm start          # http://localhost:4173
+npm test           # 19 end-to-end API tests
+```
+
+The server reads configuration from environment variables, or you can copy `.env.example` values into your shell. The AI key can also be set in-app by an admin (Admin → AI provider configuration), which takes precedence over env vars.
+
+### AI provider
+
+The app works with OpenCode Zen, OpenAI, or any OpenAI-compatible endpoint (e.g. **Groq**). `src/ai.js` picks a provider from the configured key/base URL/model. Examples:
+
+```bash
+# OpenCode Zen
+OPENCODE_API_KEY="your-zen-key" npm start
+# OpenAI
 OPENAI_API_KEY="sk-..." npm start
-# or any OpenAI-compatible endpoint:
+# Groq (OpenAI-compatible)
+OPENAI_API_KEY="gsk-..." AI_BASE_URL="https://api.groq.com/openai/v1" AI_MODEL="openai/gpt-oss-120b" npm start
+# any OpenAI-compatible endpoint
 AI_BASE_URL="https://other-provider/v1" AI_MODEL="model-name" OPENAI_API_KEY="key" npm start
 ```
 
-Runs on port 4173 (override with `PORT`). `npm test` runs the full API suite.
-
-OpenCode Zen is used automatically when `OPENCODE_API_KEY` is set (base `https://opencode.ai/zen/v1`, model `x-preview-f-free` — Ox Alpha Free). The key lives only in the server process; the browser never sees it. Admins can also set the AI key in-app (Admin → AI provider configuration), which takes precedence over these env vars.
+OpenCode Zen is used automatically when `OPENCODE_API_KEY` is set (base `https://opencode.ai/zen/v1`, model `x-preview-f-free` — Ox Alpha Free). The key lives only in the server process; the browser never sees it.
 
 ### Email (magic links & password reset)
 
@@ -62,6 +77,20 @@ When SMTP is **not** configured, the app logs a clickable link to stdout instead
 [mail/fallback] http://localhost:4173/app#magic=...
 ```
 
+## Deployment
+
+A **Render blueprint** (`render.yaml`) is included. It deploys the app as a single Node web service with a **persistent disk** for the JSON datastore (which must survive restarts), an `APP_URL` for building email links, and secret placeholders (`sync: false`) for the SMTP and AI credentials.
+
+Deploy steps:
+1. Push this repo to GitHub.
+2. In Render: **New → Blueprint** → select the repo.
+3. In the service's **Environment** tab, set the secrets:
+   - `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` (Gmail App Password, or any SMTP)
+   - `APP_URL` (the `https://…` URL Render assigns the service)
+   - `OPENCODE_API_KEY` or `OPENAI_API_KEY` (+ `AI_BASE_URL`/`AI_MODEL`), or set these in-app after the first deploy.
+
+The render blueprint defaults to the Gmail SMTP host/port. Any SMTP provider can be used by adjusting `SMTP_HOST`/`SMTP_PORT`/`SMTP_SECURE`.
+
 ## What is implemented
 
 - **Auth** — email **magic-link sign-in** (password + register also supported). Request a link on the login screen and it's delivered to the inbox over SMTP. Persistent HttpOnly sessions with expiry.
@@ -76,10 +105,10 @@ When SMTP is **not** configured, the app logs a clickable link to stdout instead
 - **My Documents** — search, sort, status filter, favorites, archive, trash with restore and permanent delete
 - **Workflow chaining** — lesson plan → assessment/activity sheet/remediation etc., carrying topic, quarter, week, and grade context forward; related-work recommendations on each document
 - **Export** — genuine `.docx` and `.pdf` files rendered server-side from document structure, plus print stylesheet
-- **Admin surface** — `/api/admin/templates` and `/api/admin/knowledge` endpoints gated server-side behind the `admin` role
+- **Admin surface** — Admin workspace with competency import, knowledge/template management, and **AI provider configuration** (set keys in-app), all gated server-side behind the `admin` role
 - **Feedback & history** — helpful/not-helpful per document; per-user AI generation history
 - **Security** — ownership checks on every document request, admin role enforcement, rate limiting on generate/refine/export, sanitized errors, no stack traces to clients
 
 ## Production notes
 
-Move the JSON datastore to PostgreSQL (the module boundary in `src/db.js` is the swap point), sessions to Redis, add email delivery for password resets, terminate TLS at the edge (`Secure` cookies enable automatically with `NODE_ENV=production`), and run `NODE_ENV=production`.
+For heavier traffic, move the JSON datastore to PostgreSQL (the module boundary in `src/db.js` is the swap point) and sessions to Redis. Terminate TLS at the edge (`Secure` cookies enable automatically with `NODE_ENV=production`), set `APP_URL` to the public origin, and run `NODE_ENV=production`. Email delivery for magic links and password resets is already implemented via SMTP. Generation runs as an in-process background job — on a single Render service this is fine, but multi-instance deploys should externalize job state.
