@@ -17,8 +17,8 @@ export function toast(message) {
   toastTimer = setTimeout(() => el.remove(), 3200);
 }
 
-export function modal(contentHtml) {
-  const overlay = h(`<div class="modal search-modal" role="dialog" aria-modal="true">${contentHtml}</div>`);
+export function modal(contentHtml, cls = '') {
+  const overlay = h(`<div class="modal ${cls}" role="dialog" aria-modal="true">${contentHtml}</div>`);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   document.body.appendChild(overlay);
   return overlay;

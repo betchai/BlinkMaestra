@@ -1,6 +1,8 @@
 import { db, save } from './db.js';
 import * as auth from './auth.js';
 import * as docs from './documents.js';
+import * as billing from './billing.js';
+import { report as computeReport } from './reports.js';
 import { runGeneration, pipelineStages } from './pipeline.js';
 import { listTemplates, CAPABILITIES, routeCapability, relatedCapabilities } from './capabilities.js';
 import { knowledgeFor, CATEGORIES } from './knowledge.js';
@@ -25,6 +27,19 @@ async function body(req) {
 async function requireUser(req, res) {
   const id = await auth.requireAuth(req);
   if (!id) send(res, 401, { error: 'Please sign in to continue.' });
+  return id;
+}
+
+async function requireAccess(req, res) {
+  const id = await requireUser(req, res); if (!id) return;
+  const data = await db();
+  const user = data.users.find((u) => u.id === id);
+  try {
+    await billing.assertCanAccess(user);
+  } catch (e) {
+    if (e.code) { send(res, e.status, { error: e.message, code: e.code, entitlement: e.entitlement }); return; }
+    throw e;
+  }
   return id;
 }
 
@@ -94,11 +109,32 @@ export async function handleApi(req, res, pathname) {
     return send(res, 200, { user: auth.publicUser(user), profile }, { 'set-cookie': auth.sessionCookie(sessionToken) });
   }
 
+  // First-time magic-link sign-ins set their password (activates the account).
+  if (pathname === '/api/set-password' && method === 'POST') {
+    const id = await requireUser(req, res); if (!id) return;
+    const p = await body(req);
+    const { user, profile } = await auth.setPassword({ userId: id, password: p.password, name: p.name });
+    return send(res, 200, { user: auth.publicUser(user), profile });
+  }
+
   if (pathname === '/api/me' && method === 'GET') {
     const id = await requireUser(req, res); if (!id) return;
     const data = await db();
     const u = data.users.find((x) => x.id === id);
-    return send(res, 200, { user: auth.publicUser(u), profile: data.profiles.find((x) => x.userId === id) });
+    const entitlement = await billing.entitlementFor(u);
+    const plans = await billing.paymentsEnabledAsync();
+    const myOrders = await billing.listOrdersForUser(id);
+    const pendingOrders = myOrders.filter((o) => o.status === 'pending');
+    return send(res, 200, {
+      user: auth.publicUser(u),
+      profile: data.profiles.find((x) => x.userId === id),
+      entitlement,
+      payments: {
+        enabled: plans,
+        plan: billing.PLAN,
+        pendingOrders: pendingOrders.map((o) => ({ id: o.id, months: o.months, total: o.total, createdAt: o.createdAt })),
+      },
+    });
   }
 
   if (pathname === '/api/profile' && method === 'PUT') {
@@ -149,7 +185,20 @@ export async function handleApi(req, res, pathname) {
       knowledge: data.knowledge,
       competencyCount: data.competencies.length,
       users: data.users.length,
+      payments: {
+        enabled: await billing.paymentsEnabledAsync(),
+        pendingOrders: (await billing.listAllOrders()).filter((o) => o.status === 'pending').length,
+      },
     });
+  }
+
+  // ---------- Admin analytics / report dashboard ----------
+  if (pathname === '/api/admin/report' && method === 'GET') {
+    const id = await requireUser(req, res); if (!id) return;
+    const data = await db();
+    const user = data.users.find((u) => u.id === id);
+    if (!requireAdmin(user, res)) return;
+    return send(res, 200, await computeReport());
   }
 
   // ---------- Admin AI configuration ----------
@@ -236,7 +285,9 @@ export async function handleApi(req, res, pathname) {
     return send(res, 200, { profile: data.profiles[i] });
   }
 
-  if (pathname.startsWith('/api/admin/') && method !== 'GET') {
+  // NOTE: /api/admin/billing/* routes are handled in their own dedicated block
+  // below and must NOT be swallowed by this generic admin handler.
+  if (pathname.startsWith('/api/admin/') && !pathname.startsWith('/api/admin/billing/') && method !== 'GET') {
     const id = await requireUser(req, res); if (!id) return;
     const data = await db();
     const user = data.users.find((u) => u.id === id);
@@ -291,39 +342,96 @@ export async function handleApi(req, res, pathname) {
     }
   }
 
+  // ---------- Billing / subscriptions ----------
+  if (pathname === '/api/billing/quote' && method === 'POST') {
+    const id = await requireUser(req, res); if (!id) return;
+    return send(res, 200, billing.quote((await body(req)).months));
+  }
+
+  if (pathname === '/api/billing/orders' && method === 'POST') {
+    const id = await requireUser(req, res); if (!id) return;
+    return send(res, 201, await billing.createOrder(id, await body(req)));
+  }
+
+  if (pathname === '/api/billing/orders' && method === 'GET') {
+    const id = await requireUser(req, res); if (!id) return;
+    return send(res, 200, { orders: await billing.listOrdersForUser(id) });
+  }
+
+  if (pathname === '/api/admin/billing/orders' && method === 'GET') {
+    const id = await requireUser(req, res); if (!id) return;
+    const data = await db();
+    const user = data.users.find((u) => u.id === id);
+    if (!requireAdmin(user, res)) return;
+    return send(res, 200, { orders: await billing.listAllOrders(true) });
+  }
+
+  let bm;
+  if ((bm = pathname.match(/^\/api\/admin\/billing\/orders\/([^/]+)\/(approve|reject)$/)) && method === 'POST') {
+    const id = await requireUser(req, res); if (!id) return;
+    const data = await db();
+    const user = data.users.find((u) => u.id === id);
+    if (!requireAdmin(user, res)) return;
+    const action = bm[2];
+    const p = await body(req);
+    const result = action === 'approve'
+      ? await billing.approveOrder(id, bm[1])
+      : await billing.rejectOrder(id, bm[1], p.reason);
+    return send(res, 200, result);
+  }
+
+  if (pathname === '/api/admin/billing/payments-toggle' && method === 'POST') {
+    const id = await requireUser(req, res); if (!id) return;
+    const data = await db();
+    const user = data.users.find((u) => u.id === id);
+    if (!requireAdmin(user, res)) return;
+    const p = await body(req);
+    return send(res, 200, await billing.setPaymentsEnabled(!!p.enabled));
+  }
+
   // ---------- Documents ----------
   if (pathname === '/api/documents' && method === 'GET') {
-    const id = await requireUser(req, res); if (!id) return;
+    const id = await requireAccess(req, res); if (!id) return;
     return send(res, 200, { documents: await docs.listDocuments(id) });
   }
 
   if (pathname === '/api/documents' && method === 'POST') {
-    const id = await requireUser(req, res); if (!id) return;
+    const id = await requireAccess(req, res); if (!id) return;
     return send(res, 201, { document: await docs.createDocument(id, await body(req)) });
   }
 
   let m;
-  if ((m = pathname.match(/^\/api\/documents\/([^/]+)(\/.*)?$/))) {
+    if ((m = pathname.match(/^\/api\/documents\/([^/]+)(\/.*)?$/))) {
     const [, docId, sub] = m;
     if (!sub && method === 'GET') {
-      const id = await requireUser(req, res); if (!id) return;
+      const id = await requireAccess(req, res); if (!id) return;
       return send(res, 200, { document: await docs.getDocument(id, docId) });
     }
+    if (!sub && method === 'POST') {
+      return send(res, 405, { error: 'Method not allowed.' });
+    }
+    if (sub === '/status' && method === 'POST') {
+      const id = await requireAccess(req, res); if (!id) return;
+      const p = await body(req);
+      const status = p.status;
+      if (!['Draft', 'In Progress', 'Final'].includes(status)) return send(res, 400, { error: 'Status must be Draft, In Progress, or Final.' });
+      return send(res, 200, { document: await docs.setDocumentStatus(id, docId, status) });
+    }
     if (!sub && ['PUT', 'PATCH'].includes(method)) {
-      const id = await requireUser(req, res); if (!id) return;
+      const id = await requireAccess(req, res); if (!id) return;
       const d = await docs.updateDocument(id, docId, await body(req));
       return send(res, 200, { document: d });
     }
     if (sub === '/duplicate' && method === 'POST') {
-      const id = await requireUser(req, res); if (!id) return;
+      const id = await requireAccess(req, res); if (!id) return;
       return send(res, 201, { document: await docs.duplicateDocument(id, docId) });
     }
     if (sub === '/restore-document' && method === 'POST') {
-      const id = await requireUser(req, res); if (!id) return;
+      const id = await requireAccess(req, res); if (!id) return;
       return send(res, 200, { document: await docs.restoreDocument(id, docId) });
     }
     if (!sub && method === 'DELETE') {
-      const id = await requireUser(req, res); if (!id) return;
+      const id = await requireAccess(req, res); if (!id) return;
       const url = new URL(req.url, 'http://x');
       if (url.searchParams.get('permanent') === 'true') {
         await docs.purgeDocument(id, docId);
@@ -332,11 +440,11 @@ export async function handleApi(req, res, pathname) {
       return send(res, 200, { document: await docs.softDeleteDocument(id, docId) });
     }
     if ((m = sub?.match(/^\/versions\/([^/]+)\/restore$/)) && method === 'POST') {
-      const id = await requireUser(req, res); if (!id) return;
+      const id = await requireAccess(req, res); if (!id) return;
       return send(res, 200, { document: await docs.restoreVersion(id, docId, m[1]) });
     }
     if (sub === '/feedback' && method === 'POST') {
-      const id = await requireUser(req, res); if (!id) return;
+      const id = await requireAccess(req, res); if (!id) return;
       const p = await body(req);
       const d = await docs.getDocument(id, docId);
       d.feedback = { helpful: !!p.helpful, comment: String(p.comment || '').slice(0, 1000), createdAt: new Date().toISOString() };
@@ -346,7 +454,7 @@ export async function handleApi(req, res, pathname) {
       return send(res, 200, { ok: true });
     }
     if (sub === '/export' && method === 'POST') {
-      const id = await requireUser(req, res); if (!id) return;
+      const id = await requireAccess(req, res); if (!id) return;
       if (rateLimited(`export:${id}`, 30)) return send(res, 429, { error: 'Too many exports right now. Please wait a moment.' });
       const d = await docs.getDocument(id, docId);
       const format = (await body(req)).format || 'docx';
@@ -372,10 +480,17 @@ export async function handleApi(req, res, pathname) {
     if (rateLimited(`gen:${id}`, 12)) return send(res, 429, { error: 'You have made many requests in a short time. Please wait a minute before generating again.' });
     const p = await body(req);
     const data = await db();
+    const user = data.users.find((u) => u.id === id);
+    let ent;
+    try { ent = await billing.assertCanGenerate(user); }
+    catch (e) { if (e.code) return send(res, e.status, { error: e.message, code: e.code, entitlement: e.entitlement }); throw e; }
     const profile = data.profiles.find((x) => x.userId === id) || {};
     const jobId = randomUUID();
     const job = { id: jobId, userId: id, status: 'queued', stage: 'Queued', startedAt: Date.now(), result: null, error: null };
     jobs.set(jobId, job);
+    // Reserve a generation slot now; on completion we record usage. Free users get
+    // one credit consumed per submission (a failed generation still uses a slot).
+    await billing.consumeAllowance(id, ent);
     runGeneration({
       requestedCapability: p.capability,
       context: p.context || {},
@@ -389,7 +504,9 @@ export async function handleApi(req, res, pathname) {
       data.aiRequests.push({
         id: randomUUID(), userId: id, capability: result.capability || p.capability || 'General',
         title: result.title || '', createdAt: new Date().toISOString(),
-        documentId: p.documentId || null, validation: result.validation,
+        documentId: p.documentId || null,
+        template: (p.context || {}).template || null,
+        validation: result.validation,
         usage: result.usage ? { input_tokens: result.usage.input_tokens, output_tokens: result.usage.output_tokens } : null,
       });
       save(data);
@@ -420,6 +537,11 @@ export async function handleApi(req, res, pathname) {
     if (rateLimited(`refine:${id}`, 30)) return send(res, 429, { error: 'Please wait a moment before refining again.' });
     const p = await body(req);
     const data = await db();
+    const user = data.users.find((u) => u.id === id);
+    let ent;
+    try { ent = await billing.assertCanGenerate(user); }
+    catch (e) { if (e.code) return send(res, e.status, { error: e.message, code: e.code, entitlement: e.entitlement }); throw e; }
+    await billing.consumeAllowance(id, ent);
     const profile = data.profiles.find((x) => x.userId === id) || {};
     const refs = knowledgeFor(p.capability || 'General', data.knowledge);
     const result = await runGeneration({

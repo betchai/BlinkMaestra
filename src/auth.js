@@ -26,7 +26,7 @@ export function cookies(req) {
 }
 
 export function publicUser(u) {
-  return { id: u.id, email: u.email, role: u.role, name: u.name };
+  return { id: u.id, email: u.email, role: u.role, name: u.name, hasPassword: !!(u.passwordHash && u.salt) };
 }
 
 // Emails listed in ADMIN_EMAILS (comma-separated) are granted the admin role.
@@ -47,10 +47,12 @@ export function applyRole(user) {
 
 async function createSession(userId) {
   const data = await db();
+  // Single active session: signing in from a new device revokes all previous
+  // sessions for this account, so a shared/multi-device login kicks out the
+  // existing one. This deters account sharing while keeping one device active.
+  data.sessions = data.sessions.filter((s) => s.userId !== userId && new Date(s.expiresAt) > new Date());
   const token = randomBytes(32).toString('hex');
-  const session = { token, userId, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString() };
-  data.sessions.push(session);
-  data.sessions = data.sessions.filter((s) => new Date(s.expiresAt) > new Date());
+  data.sessions.push({ token, userId, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString() });
   await save(data);
   return token;
 }
@@ -225,9 +227,37 @@ export async function verifyMagicLink(token) {
   if (!record) throw Object.assign(new Error('This sign-in link is invalid or has expired. Request a new one.'), { status: 400 });
   const user = data.users.find((u) => u.id === record.userId);
   if (!user) throw Object.assign(new Error('This sign-in link is invalid or has expired. Request a new one.'), { status: 400 });
+  // Magic links are for FIRST-TIME setup only. Once a teacher has set a password
+  // (activated account), they must sign in with email + password going forward.
+  if (user.passwordHash && user.salt) {
+    throw Object.assign(new Error('This link is only for first-time setup. Please sign in with your password.'), { status: 400 });
+  }
   data.magicTokens.splice(data.magicTokens.indexOf(record), 1);
   applyRole(user); // promote/demote to match current ADMIN_EMAILS configuration
   await save(data);
   const profile = data.profiles.find((x) => x.userId === user.id);
   return { user, token: await createSession(user.id), profile };
+}
+
+// Sets a password for a user who signed in via magic link for the first time.
+// This "activates" the account; from then on they sign in with email + password.
+// Rejects if the account already has a password, so it can't be reused or hijacked.
+export async function setPassword({ userId, password, name }) {
+  if (!password || password.length < 8) {
+    throw Object.assign(new Error('Use a password with at least 8 characters.'), { status: 400 });
+  }
+  const data = await db();
+  const user = data.users.find((u) => u.id === userId);
+  if (!user) throw Object.assign(new Error('This account is not available.'), { status: 404 });
+  if (user.passwordHash && user.salt) {
+    throw Object.assign(new Error('This account already has a password. Please sign in with it.'), { status: 400 });
+  }
+  const secured = hash(password);
+  user.passwordHash = secured.hash;
+  user.salt = secured.salt;
+  if (typeof name === 'string' && name.trim()) user.name = name.trim().slice(0, 80);
+  applyRole(user);
+  await audit(data, user.id, 'set-password');
+  await save(data);
+  return { user, profile: data.profiles.find((x) => x.userId === user.id) };
 }

@@ -11,9 +11,12 @@ server.js            HTTP entry + static file serving
 src/
   router.js          All API routes, rate limiting, error sanitization
   auth.js            Magic-link & password auth, roles, persisted sessions
-  db.js              JSON datastore (users, profiles, sessions, tokens,
-                     documents, versions, aiRequests, feedback, auditLog,
-                     settings, templates, knowledge)
+  db.js              Datastore: PostgreSQL-backed (single JSONB row) when
+                     DATABASE_URL is set, else a local JSON file. Holds users,
+                     profiles, sessions, tokens, documents, versions, aiRequests,
+                     feedback, auditLog, settings, templates, knowledge
+  billing.js         Monetization: free-trial allowance, GCash subscriptions,
+                     admin payment approval, payments on/off toggle
   mail.js            SMTP delivery for magic links & password resets
   documents.js       Document lifecycle: CRUD, versions, trash/archive/duplicate
   pipeline.js        Generation pipeline: routing → knowledge → AI → validation
@@ -24,7 +27,7 @@ src/
   export.js          Real DOCX (docx) and PDF (pdfkit) generation
 public/              Vanilla-JS SPA (guided input engine, editor with
                      contextual AI actions, autosave, versions, exports)
-tests/server.test.js 19 end-to-end API tests
+tests/server.test.js 22 end-to-end API tests
 ```
 
 ## Run locally
@@ -32,10 +35,40 @@ tests/server.test.js 19 end-to-end API tests
 ```bash
 npm install
 npm start          # http://localhost:4173
-npm test           # 19 end-to-end API tests
+npm test           # 22 end-to-end API tests
 ```
 
 The server reads configuration from environment variables, or you can copy `.env.example` values into your shell. The AI key can also be set in-app by an admin (Admin → AI provider configuration), which takes precedence over env vars.
+
+### Storage: PostgreSQL (recommended) or local JSON
+
+The app stores all state as a single JSON document. By default (no `DATABASE_URL`) it persists to a local file at `DATA_DIR/copilot.json` — ideal for local dev and tests. For production, set `DATABASE_URL` to a PostgreSQL connection string and the app stores the document as a single JSONB row, which is durable and backup-able. The module boundary in `src/db.js` transparently handles both; you don't need to change any code.
+
+```bash
+# Local (default):
+npm start
+# PostgreSQL:
+DATABASE_URL="postgres://user:pass@host:5432/db" npm start
+```
+
+### Billing & subscriptions (monetization)
+
+BLinkMaestra ships with an optional payment module for the subscription model:
+
+- **Master toggle (`PAYMENTS_ENABLED`)** — **OFF by default**, so teachers can test freely. Turn it **ON** (via **Admin → Payments & subscriptions**) once you're ready to charge. When off, everyone is unlimited and no paywall appears.
+- **Free trial** — a new teacher gets `FREE_ALLOWANCE` (default 5) free document generations. Only creating new AI documents counts.
+- **Paywall** — when the free allowance runs out (or a paid period expires), the teacher must subscribe to keep using the workspace.
+- **Subscription** — the teacher picks **1, 3, 6, or 12 months**, sees the total (months × `BILLING_PER_MONTH`, default PHP 100), and pays via **GCash** to `BILLING_GCASH` (default `09299865338`). They submit the GCash reference number + optional note.
+- **Admin approval** — the admin reviews pending payments (Admin → Payments & subscriptions) and approves/rejects. On approval the teacher's access is granted from that day forward and **stacks** on any existing paid time.
+- Admins are never gated.
+
+```bash
+# Env knobs (all optional; defaults shown):
+PAYMENTS_ENABLED=false        # true to require payment
+FREE_ALLOWANCE=5              # free generations before subscribing
+BILLING_PER_MONTH=100         # PHP per month
+BILLING_GCASH=09299865338     # GCash number teachers pay into
+```
 
 ### AI provider
 
@@ -79,17 +112,18 @@ When SMTP is **not** configured, the app logs a clickable link to stdout instead
 
 ## Deployment
 
-A **Render blueprint** (`render.yaml`) is included. It deploys the app as a single Node web service with a **persistent disk** for the JSON datastore (which must survive restarts), an `APP_URL` for building email links, and secret placeholders (`sync: false`) for the SMTP and AI credentials.
+A **Render blueprint** (`render.yaml`) is included. It deploys the app as a single Node web service backed by a **managed PostgreSQL database** (the app's datastore), with an `APP_URL` for building email links, and secret placeholders (`sync: false`) for the SMTP and AI credentials. A legacy persistent disk is also mounted for the JSON fallback path.
 
 Deploy steps:
 1. Push this repo to GitHub.
-2. In Render: **New → Blueprint** → select the repo.
+2. In Render: **New → Blueprint** → select the repo. The blueprint provisions the Postgres database and wires `DATABASE_URL` automatically.
 3. In the service's **Environment** tab, set the secrets:
    - `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` (Gmail App Password, or any SMTP)
    - `APP_URL` (the `https://…` URL Render assigns the service)
    - `OPENCODE_API_KEY` or `OPENAI_API_KEY` (+ `AI_BASE_URL`/`AI_MODEL`), or set these in-app after the first deploy.
+4. Payment is **off** by default. When you're ready to monetize, turn it on in **Admin → Payments & subscriptions** (or set `PAYMENTS_ENABLED=true`).
 
-The render blueprint defaults to the Gmail SMTP host/port. Any SMTP provider can be used by adjusting `SMTP_HOST`/`SMTP_PORT`/`SMTP_SECURE`.
+The render blueprint defaults to the Gmail SMTP host/port. Any SMTP provider can be used by adjusting `SMTP_HOST`/`SMTP_PORT`/`SMTP_SECURE`. Google sometimes blocks SMTP from cloud/datacenter IPs — if Gmail fails in production, use a transactional provider (Brevo/Resend/SMTP2GO) which is a simple env change in `src/mail.js`.
 
 ## What is implemented
 
@@ -105,10 +139,11 @@ The render blueprint defaults to the Gmail SMTP host/port. Any SMTP provider can
 - **My Documents** — search, sort, status filter, favorites, archive, trash with restore and permanent delete
 - **Workflow chaining** — lesson plan → assessment/activity sheet/remediation etc., carrying topic, quarter, week, and grade context forward; related-work recommendations on each document
 - **Export** — genuine `.docx` and `.pdf` files rendered server-side from document structure, plus print stylesheet
-- **Admin surface** — Admin workspace with competency import, knowledge/template management, and **AI provider configuration** (set keys in-app), all gated server-side behind the `admin` role
+- **Admin surface** — Admin workspace with competency import, knowledge/template management, **AI provider configuration** (set keys in-app), and **Payments & subscriptions** (turn payments on/off, review and approve teacher payments), all gated server-side behind the `admin` role
+- **Billing / monetization** — optional payments module (off by default): free-trial allowance, GCash subscription orders with admin approval, stacking expiry, and a full-access paywall
 - **Feedback & history** — helpful/not-helpful per document; per-user AI generation history
 - **Security** — ownership checks on every document request, admin role enforcement, rate limiting on generate/refine/export, sanitized errors, no stack traces to clients
 
 ## Production notes
 
-For heavier traffic, move the JSON datastore to PostgreSQL (the module boundary in `src/db.js` is the swap point) and sessions to Redis. Terminate TLS at the edge (`Secure` cookies enable automatically with `NODE_ENV=production`), set `APP_URL` to the public origin, and run `NODE_ENV=production`. Email delivery for magic links and password resets is already implemented via SMTP. Generation runs as an in-process background job — on a single Render service this is fine, but multi-instance deploys should externalize job state.
+State is stored in **PostgreSQL** (single JSONB row) when `DATABASE_URL` is set, which is the recommended production setup and is durable/backup-able. Terminate TLS at the edge (`Secure` cookies enable automatically with `NODE_ENV=production`), set `APP_URL` to the public origin, and run `NODE_ENV=production`. Email delivery for magic links and password resets is already implemented via SMTP. Generation runs as an in-process background job — on a single Render service this is fine, but multi-instance deploys should externalize job state.

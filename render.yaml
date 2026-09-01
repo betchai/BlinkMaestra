@@ -1,11 +1,17 @@
 # BLinkMaestra (DepEd Teacher Copilot) — Render Blueprint
 # Deploy: connect GitHub repo (betchai/BlinkMaestra) → New → Blueprint
 #
-# Single Node web service with a persistent disk for the JSON datastore.
-# The JSON DB (DATA_DIR/copilot.json) must survive restarts → persistent disk.
+# Single Node web service backed by a managed PostgreSQL database. The workspace
+# state is stored as a single JSONB row in Postgres, which is durable and
+# backup-able. The legacy persistent-disk JSON path (DATA_DIR) is still supported
+# as a fallback when DATABASE_URL is unset.
 #
-# Estimated cost: $0 on free tier (spins down after ~15 min idle)
-#                  or ~$7/mo on Starter (always on).
+# Estimated cost: Postgres Basic ~$7/mo + web service ~$7/mo on Starter (always on).
+
+databases:
+  - name: blinkmaestra-db
+    plan: basic-256mb # or: free (arm64) — basic recommended for durability
+    databaseName: blinkmaestra
 
 services:
   - type: web
@@ -16,15 +22,30 @@ services:
     startCommand: node server.js
     healthCheckPath: /
     autoDeploy: true
-
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 10000
-      # Point the JSON datastore at the persistent disk mount
+      # Point the app at the managed Postgres database created above.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: blinkmaestra-db
+          property: connectionString
+      # Legacy JSON fallback if DATABASE_URL is removed:
       - key: DATA_DIR
         value: /var/data
+      # Billing: master switch (OFF by default so teachers test free). Flip via the
+      # admin Payments panel, or set PAYMENTS_ENABLED=true to require payment.
+      - key: PAYMENTS_ENABLED
+        value: "false"
+      - key: FREE_ALLOWANCE
+        value: "5"
+      - key: BILLING_PER_MONTH
+        value: "100"
+      # GCash number where teachers send payment — change to your own:
+      - key: BILLING_GCASH
+        value: "09299865338"
       # AI provider: set one of these in the Render dashboard (secret) as a bootstrap
       # fallback, OR configure in-app via the admin's "AI provider configuration".
       # Admin-set keys take precedence over these env vars.
@@ -59,7 +80,8 @@ services:
       - key: APP_URL
         sync: false
 
-    # Persistent disk for the JSON datastore (copilot.json)
+    # Legacy persistent disk for the JSON datastore fallback (only used if
+    # DATABASE_URL is unset). Can be removed once fully on Postgres.
     disk:
       name: data
       mountPath: /var/data

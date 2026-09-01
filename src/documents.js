@@ -21,6 +21,7 @@ export async function createDocument(userId, p) {
     capability: p.capability || 'General',
     documentType: p.documentType || 'Document',
     status: p.status || 'Draft',
+    locked: !!p.locked,
     tags: p.tags || [],
     folder: p.folder || 'My Documents',
     favorite: false,
@@ -58,6 +59,8 @@ export async function updateDocument(userId, docId, p) {
   const { data, d } = await findRaw(userId, docId);
   const changed = typeof p.contentHtml === 'string' && p.contentHtml !== d.contentHtml;
   if (changed) {
+    // A Final document is locked against accidental edits. Use "edit anyway" to unlock it.
+    if (d.locked) throw Object.assign(new Error('This document is marked as final and locked. Use "Edit anyway" to unlock it before making changes.'), { status: 423, code: 'doc_locked' });
     // Keep the previous state as a restorable version; never silently overwrite.
     d.versions.push({
       id: randomUUID(),
@@ -79,6 +82,27 @@ export async function softDeleteDocument(userId, docId) {
   const { data, d } = await findRaw(userId, docId);
   d.deletedAt = new Date().toISOString();
   d.status = 'Deleted';
+  await save(data);
+  return safeDocument(d);
+}
+
+// Set a document's workflow status. Marking Final locks it (accidental-edit guard);
+// marking Draft unlocks it (the "Edit anyway" path). Admins always bypass.
+export async function setDocumentStatus(userId, docId, status) {
+  const { data, d } = await findRaw(userId, docId);
+  if (status === 'Final') {
+    d.status = 'Final';
+    d.locked = true;
+    d.unlockedAt = null;
+  } else if (status === 'In Progress') {
+    d.status = 'In Progress';
+    d.locked = false;
+  } else {
+    d.status = 'Draft';
+    d.locked = false;
+  }
+  d.updatedAt = new Date().toISOString();
+  await audit(data, userId, 'document-status', { id: docId, status: d.status });
   await save(data);
   return safeDocument(d);
 }

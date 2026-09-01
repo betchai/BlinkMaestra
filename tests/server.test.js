@@ -266,3 +266,179 @@ test('admin can set and read AI config; non-admin cannot', async () => {
   assert.equal((await api('/api/admin/ai-config', { cookie: teacherCookie })).status, 403);
   assert.equal((await api('/api/admin/ai-config', { method: 'PUT', cookie: teacherCookie, body: { opencodeKey: 'x' } })).status, 403);
 });
+
+// ---------- Billing / monetization toggle ----------
+const adminLogin = async () => {
+  const email = 'betchay.canyas@gmail.com';
+  await api('/api/magic-request', { method: 'POST', body: { email } });
+  const stored = JSON.parse(readFileSync(`${dataDir}/copilot.json`, 'utf8'));
+  const u = stored.users.find((x) => x.email === email);
+  const tok = stored.magicTokens.find((t) => t.userId === u.id).token;
+  const login = await api(`/api/magic/verify?token=${tok}`);
+  return login.headers.get('set-cookie').split(';')[0];
+};
+
+test('payments are OFF by default and everyone is un-gated', async () => {
+  const me = await api('/api/me', { cookie: (await registerUser('def')).cookie });
+  assert.equal(me.data.payments.enabled, false);
+  assert.equal(me.data.entitlement.status, 'unavailable');
+});
+
+test('payments toggle is admin-only', async () => {
+  const t = await registerUser('toggle-teacher');
+  const denied = await api('/api/admin/billing/payments-toggle', { method: 'POST', cookie: t.cookie, body: { enabled: true } });
+  assert.equal(denied.status, 403);
+});
+
+test('free trial: 5 generations then limited; order + admin approval grants access; stacks on renew', async () => {
+  const adminCookie = await adminLogin();
+  const toggle = await api('/api/admin/billing/payments-toggle', { method: 'POST', cookie: adminCookie, body: { enabled: true } });
+  assert.equal(toggle.status, 200);
+
+  const { cookie } = await registerUser('billing');
+  const me = await api('/api/me', { cookie });
+  assert.equal(me.data.payments.enabled, true);
+  assert.equal(me.data.entitlement.status, 'free');
+  assert.equal(me.data.entitlement.freeAllowance, 5);
+
+  // Fresh free user can create documents.
+  assert.equal((await api('/api/documents', { method: 'POST', cookie, body: { title: 'D' } })).status, 201);
+
+  // Consume the 5 free generations via /api/generate. Consumption happens at
+  // submission time (before the async AI job), so the allowance is reserved even
+  // though no AI provider is configured in the test environment.
+  for (let i = 0; i < 5; i++) {
+    const g = await api('/api/generate', { method: 'POST', cookie, body: { capability: 'General' } });
+    assert.equal(g.status, 202);
+  }
+
+  const meLimited = await api('/api/me', { cookie });
+  assert.equal(meLimited.data.entitlement.status, 'limited');
+
+  // Document access is now fully blocked.
+  const blocked = await api('/api/documents', { cookie });
+  assert.equal(blocked.status, 403);
+  assert.equal(blocked.data.code, 'subscription_required');
+
+  // Teacher orders a subscription; admin approves; access restored and stacked.
+  const quote = await api('/api/billing/quote', { method: 'POST', cookie, body: { months: 3 } });
+  assert.equal(quote.data.total, 300);
+  const order = await api('/api/billing/orders', { method: 'POST', cookie, body: { months: 3, ref: 'GC-12345', note: 'hello' } });
+  assert.equal(order.status, 201);
+  const orderId = order.data.order.id;
+
+  const allOrders = await api('/api/admin/billing/orders', { cookie: adminCookie });
+  assert.equal(allOrders.data.orders.some((o) => o.id === orderId && o.status === 'pending'), true);
+
+  const approve = await api(`/api/admin/billing/orders/${orderId}/approve`, { method: 'POST', cookie: adminCookie, body: {} });
+  assert.equal(approve.status, 200);
+  const meActive = await api('/api/me', { cookie });
+  assert.equal(meActive.data.entitlement.status, 'active');
+  assert.ok(meActive.data.entitlement.activeUntil);
+  assert.equal((await api('/api/documents', { cookie })).status, 200);
+
+  // Renewal stacks onto the existing expiry.
+  const order2 = await api('/api/billing/orders', { method: 'POST', cookie, body: { months: 12, ref: 'GC-67890' } });
+  await api(`/api/admin/billing/orders/${order2.data.order.id}/approve`, { method: 'POST', cookie: adminCookie, body: {} });
+  const renewed = await api('/api/me', { cookie });
+  assert.equal(renewed.data.entitlement.subscription.months, 12);
+
+  // Turn payments back off so the rest of the world is un-gated again.
+  await api('/api/admin/billing/payments-toggle', { method: 'POST', cookie: adminCookie, body: { enabled: false } });
+});
+
+// ---------- First-time password setup ----------
+test('magic link first-time sign-in sets a password, then magic link is disabled', async () => {
+  const email = `setup-${Date.now()}-${Math.random().toString(36).slice(2)}@example.test`;
+  await api('/api/magic-request', { method: 'POST', body: { email } });
+  const stored = JSON.parse(readFileSync(`${dataDir}/copilot.json`, 'utf8'));
+  const user = stored.users.find((u) => u.email === email);
+  const token = stored.magicTokens.find((t) => t.userId === user.id).token;
+
+  // First-time verify: user has no password yet.
+  const verify = await api(`/api/magic/verify?token=${token}`);
+  assert.equal(verify.status, 200);
+  assert.equal(verify.data.user.hasPassword, false);
+  const cookie = verify.headers.get('set-cookie').split(';')[0];
+
+  // Set password to activate the account.
+  const setPw = await api('/api/set-password', { method: 'POST', cookie, body: { name: 'Setup Teacher', password: 'brand-new-pass-123' } });
+  assert.equal(setPw.status, 200);
+  assert.equal(setPw.data.user.hasPassword, true);
+  assert.equal(setPw.data.user.name, 'Setup Teacher');
+
+  // /api/me now reports hasPassword true.
+  const me = await api('/api/me', { cookie });
+  assert.equal(me.data.user.hasPassword, true);
+
+  // Short/weak passwords are rejected and do not activate the account.
+  const short = await api('/api/set-password', { method: 'POST', cookie, body: { password: 'short' } });
+  assert.equal(short.status, 400);
+
+  // A reused magic link for an already-activated account is now blocked.
+  const reuse = await api(`/api/magic/verify?token=${token}`);
+  assert.equal(reuse.status, 400);
+
+  // They sign in with email + password now, not magic links.
+  const login = await api('/api/login', { method: 'POST', body: { email, password: 'brand-new-pass-123' } });
+  assert.equal(login.status, 200);
+  assert.equal(login.data.user.hasPassword, true);
+});
+
+// ---------- Single active session ----------
+test('signing in on a new device revokes the previous session (account-sharing deterrent)', async () => {
+  const email = `single-${Date.now()}-${Math.random().toString(36).slice(2)}@example.test`;
+  const r = await api('/api/register', { method: 'POST', body: { name: 'One', email, password: 'secure-password-123' } });
+  assert.equal(r.status, 201);
+  const firstCookie = r.headers.get('set-cookie').split(';')[0];
+  assert.equal((await api('/api/me', { cookie: firstCookie })).status, 200);
+
+  // Log in again from a "second device" with the same credentials.
+  const second = await api('/api/login', { method: 'POST', body: { email, password: 'secure-password-123' } });
+  assert.equal(second.status, 200);
+  const secondCookie = second.headers.get('set-cookie').split(';')[0];
+  assert.equal((await api('/api/me', { cookie: secondCookie })).status, 200);
+
+  // The first device's session is now revoked.
+  assert.equal((await api('/api/me', { cookie: firstCookie })).status, 401);
+});
+
+// ---------- Admin report / analytics ----------
+test('admin report endpoint is admin-only and returns expected insight structure', async () => {
+  // Non-admin is blocked.
+  const teacher = await registerUser('report-teacher');
+  assert.equal((await api('/api/admin/report', { cookie: teacher.cookie })).status, 403);
+
+  const adminCookie = await adminLogin();
+  const r = await api('/api/admin/report', { cookie: adminCookie });
+  assert.equal(r.status, 200);
+
+  const d = r.data;
+  assert.ok(Number.isInteger(d.users.total));
+  assert.ok(typeof d.documents.total === 'number');
+  assert.ok(Array.isArray(d.documents.byTemplate));
+  assert.ok(Array.isArray(d.documents.byCapability));
+  assert.ok(Array.isArray(d.generations.byTemplate));
+  assert.ok(r.data.documents.last7 && typeof r.data.documents.last7 === 'object');
+  // subscriber/order/revenue plumbing present
+  assert.ok(typeof d.subscribers?.active?.total === 'number');
+  assert.ok(typeof d.subscribers?.revenue?.lifetime === 'number');
+  assert.ok(typeof d.orders?.pending === 'number');
+});
+
+test('approving a payment notifies the teacher by email (logged when SMTP is unset)', async () => {
+  const adminCookie = await adminLogin();
+  await api('/api/admin/billing/payments-toggle', { method: 'POST', cookie: adminCookie, body: { enabled: false } });
+
+  // Create a teacher and a pending order.
+  const { cookie } = await registerUser('email-notify');
+  const order = await api('/api/billing/orders', { method: 'POST', cookie, body: { months: 6, ref: 'GC-NOTIFY-1' } });
+  assert.equal(order.status, 201);
+
+  const approve = await api(`/api/admin/billing/orders/${order.data.order.id}/approve`, { method: 'POST', cookie: adminCookie, body: {} });
+  assert.equal(approve.status, 200);
+  assert.equal(approve.data.order.status, 'active');
+  // An email result is returned; in the test env (no SMTP) it logs instead of sending.
+  assert.ok(approve.data.email);
+  assert.equal(approve.data.email.mode, 'log');
+});

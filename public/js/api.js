@@ -9,7 +9,7 @@ async function request(path, options = {}) {
   });
   if (response.headers.get('content-type')?.includes('application/json')) {
     const payload = await response.json();
-    if (!response.ok) throw Object.assign(new Error(payload.error || 'Something went wrong. Please try again.'), { status: response.status });
+    if (!response.ok) throw Object.assign(new Error(payload.error || 'Something went wrong. Please try again.'), { status: response.status, code: payload.code, entitlement: payload.entitlement });
     return payload;
   }
   if (!response.ok) throw new Error('Something went wrong. Please try again.');
@@ -27,14 +27,25 @@ export const api = {
 
   requestMagicLink: (email) => request('/api/magic-request', { method: 'POST', body: { email } }),
   verifyMagicLink: (token) => request(`/api/magic/verify?token=${encodeURIComponent(token)}`),
+  setPassword: (p) => request('/api/set-password', { method: 'POST', body: p }),
 
   aiConfig: (includeKeys = false) => request(`/api/admin/ai-config${includeKeys ? '?includeKeys=true' : ''}`),
   saveAiConfig: (p) => request('/api/admin/ai-config', { method: 'PUT', body: p }),
+
+  billingQuote: (months) => request('/api/billing/quote', { method: 'POST', body: { months } }),
+  createOrder: (p) => request('/api/billing/orders', { method: 'POST', body: p }),
+  myOrders: () => request('/api/billing/orders').then((r) => r.orders),
+  adminOrders: () => request('/api/admin/billing/orders').then((r) => r.orders),
+  approveOrder: (id) => request(`/api/admin/billing/orders/${id}/approve`, { method: 'POST', body: {} }),
+  rejectOrder: (id, reason) => request(`/api/admin/billing/orders/${id}/reject`, { method: 'POST', body: { reason } }),
+  setPaymentsEnabled: (enabled) => request('/api/admin/billing/payments-toggle', { method: 'POST', body: { enabled } }),
+  report: () => request('/api/admin/report'),
 
   documents: () => request('/api/documents').then((r) => r.documents),
   document: (id) => request(`/api/documents/${id}`).then((r) => r.document),
   createDocument: (p) => request('/api/documents', { method: 'POST', body: p }).then((r) => r.document),
   updateDocument: (id, p) => request(`/api/documents/${id}`, { method: 'PUT', body: p }).then((r) => r.document),
+  setDocumentStatus: (id, status) => request(`/api/documents/${id}/status`, { method: 'POST', body: { status } }).then((r) => r.document),
   deleteDocument: (id, permanent = false) => request(`/api/documents/${id}${permanent ? '?permanent=true' : ''}`, { method: 'DELETE' }),
   restoreDocument: (id) => request(`/api/documents/${id}/restore-document`, { method: 'POST' }),
   duplicateDocument: (id) => request(`/api/documents/${id}/duplicate`, { method: 'POST' }).then((r) => r.document),
