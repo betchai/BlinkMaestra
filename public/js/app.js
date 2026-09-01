@@ -15,28 +15,22 @@ function go(route) {
 function authScreen(mode = 'login', prefillToken = '') {
   const isReset = mode === 'reset';
   const isConfirm = mode === 'confirm';
-  const isMagic = mode === 'magic';
-  const title = mode === 'register' ? 'Create your account' : isMagic ? 'Sign in with email' : isReset ? 'Reset your password' : isConfirm ? 'Choose a new password' : 'Welcome back';
+  const title = mode === 'register' ? 'Create your account' : isReset ? 'Reset your password' : isConfirm ? 'Choose a new password' : 'Welcome back';
   const formHtml =
     mode === 'login'
       ? `${field('Email', `<input type="email" id="f-email" required autocomplete="email">`)}
          ${field('Password', `<input type="password" id="f-password" required autocomplete="current-password">`)}
          <button class="button" type="submit" style="width:100%">Sign in</button>
-         <div class="form-actions"><button type="button" class="button ghost" data-mode="magic">First-time? Send a sign-in link</button>
-         <button type="button" class="button ghost" data-mode="register">Create an account</button>
+         <div class="form-actions"><button type="button" class="button ghost" data-mode="register">Create an account</button>
          <button type="button" class="button ghost" data-mode="reset">Forgot password?</button></div>`
       : mode === 'register'
         ? `${field('Full name', `<input id="f-name" autocomplete="name">`)}
            ${field('Email', `<input type="email" id="f-email" required autocomplete="email">`)}
-           ${field('Password', `<input type="password" id="f-password" required minlength="8" autocomplete="new-password">`, )}
+           ${field('Password', `<input type="password" id="f-password" required minlength="8" autocomplete="new-password">`)}
+           ${field('Confirm password', `<input type="password" id="f-confirm" required minlength="8" autocomplete="new-password">`)}
            <p class="notice">Use at least 8 characters.</p>
            <button class="button" type="submit" style="width:100%">Create account</button>
            <div class="form-actions"><button type="button" class="button ghost" data-mode="login">I already have an account</button></div>`
-        : isMagic
-          ? `${field('Email', `<input type="email" id="f-email" required autocomplete="email">`)}
-             <p class="notice">We'll email you a secure sign-in link, used only for setting up your account the first time. After that, sign in with your email and password.</p>
-             <button class="button" type="submit" style="width:100%">Send sign-in link</button>
-             <div class="form-actions"><button type="button" class="button ghost" data-mode="login">Use a password instead</button></div>`
         : isReset
           ? `${field('Email', `<input type="email" id="f-email" required>`)}<p class="notice">If the account exists, a reset link will be issued. Ask your administrator for access in this environment.</p>
              <button class="button" type="submit" style="width:100%">Send reset request</button>
@@ -52,8 +46,6 @@ function authScreen(mode = 'login', prefillToken = '') {
       <div class="brand" style="margin-bottom:18px;color:var(--forest)"><span class="brand-mark">B</span><div><strong style="color:var(--ink)">BLinkMaestra</strong><small>Your teaching copilot</small></div></div>
       <h1 style="font:700 24px Fraunces,serif;margin:0 0 16px">${title}</h1>
       <form id="auth-form">${formHtml}</form>
-
-      ${isMagic ? `<div id="magic-status" class="card-copy" style="display:none;margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:12px"></div>` : ''}
     </div></div>`);
   app.appendChild(page);
 
@@ -66,14 +58,12 @@ function authScreen(mode = 'login', prefillToken = '') {
         const r = await api.login({ email: v('f-email'), password: v('f-password') });
         state.user = r.user; state.profile = r.profile;
       } else if (mode === 'register') {
+        if (v('f-password') !== v('f-confirm')) {
+          toast('Passwords do not match. Try again.');
+          return;
+        }
         const r = await api.register({ name: v('f-name'), email: v('f-email'), password: v('f-password') });
         state.user = r.user; state.profile = r.profile;
-      } else if (mode === 'magic') {
-        const r = await api.requestMagicLink(v('f-email'));
-        const box = document.getElementById('magic-status');
-        box.style.display = 'block';
-        box.innerHTML = `<strong>Check your email.</strong> ${esc(r.message || 'A sign-in link was issued.')}`;
-        return;
       } else if (mode === 'reset') {
         await api.requestReset(v('f-email'));
         toast('If that account exists, a reset was issued. Check with your administrator.');
