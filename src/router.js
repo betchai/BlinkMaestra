@@ -232,8 +232,8 @@ export async function handleApi(req, res, pathname) {
   }
 
   // ---------- Admin AI configuration ----------
-  // GET returns the current provider config (keys are masked by default so secrets
-  // never leak to the browser). Pass ?includeKeys=true to load keys into the edit form.
+  // GET returns the current provider pool. Keys are masked by default so secrets
+  // never leak to the browser. Pass ?includeKeys=true to load keys into the edit form.
   if (pathname === '/api/admin/ai-config' && method === 'GET') {
     const id = await requireUser(req, res); if (!id) return;
     const data = await db();
@@ -242,11 +242,9 @@ export async function handleApi(req, res, pathname) {
     const url = new URL(req.url, 'http://x');
     const includeKeys = url.searchParams.get('includeKeys') === 'true';
     const ai = { ...(data.settings.ai || {}) };
-    if (!includeKeys) {
-      ai.opencodeKey = ai.opencodeKey ? '••••••••' : '';
-      ai.openaiKey = ai.openaiKey ? '••••••••' : '';
-    }
-    return send(res, 200, { ai, effectiveEnv: { opencode: !!process.env.OPENCODE_API_KEY, openai: !!process.env.OPENAI_API_KEY } });
+    delete ai.opencodeKey; delete ai.openaiKey;
+    const pool = (ai.pool || []).map((e) => ({ ...e, key: includeKeys ? (e.key || '') : (e.key ? '••••••••' : '') }));
+    return send(res, 200, { ai: { ...ai, pool }, effectiveEnv: { opencode: !!process.env.OPENCODE_API_KEY, openai: !!process.env.OPENAI_API_KEY } });
   }
 
   if (pathname === '/api/admin/ai-config' && method === 'PUT') {
@@ -256,15 +254,34 @@ export async function handleApi(req, res, pathname) {
     if (!requireAdmin(user, res)) return;
     const p = await body(req);
     const ai = data.settings.ai || {};
-    if (typeof p.opencodeKey === 'string') ai.opencodeKey = p.opencodeKey.trim();
-    if (typeof p.openaiKey === 'string') ai.openaiKey = p.openaiKey.trim();
     if (typeof p.baseUrl === 'string') ai.baseUrl = p.baseUrl.trim();
     if (typeof p.model === 'string') ai.model = p.model.trim();
+    if (Array.isArray(p.pool)) {
+      // Persist only non-empty entries; keys that arrive masked (no change) are kept
+      // from the stored value so we never clobber a secret with '••••••••'.
+      const stored = (ai.pool || []);
+      const usedIds = new Set();
+      ai.pool = p.pool
+        .filter((e) => e && (e.key || e.id))
+        .map((e) => {
+          const prev = stored.find((s) => s.id === e.id) || {};
+          const key = (typeof e.key === 'string' && e.key && e.key !== '••••••••') ? e.key.trim() : (prev.key || '');
+          // Assign a unique id: keep a valid, collision-free existing id, else mint one.
+          let id = (typeof e.id === 'string' && e.id) ? e.id : null;
+          if (!id || usedIds.has(id)) {
+            id = `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+            while (usedIds.has(id)) id = `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+          }
+          usedIds.add(id);
+          return { id, label: (e.label || '').trim(), baseUrl: (e.baseUrl || '').trim(), model: (e.model || '').trim(), key };
+        })
+        .filter((e) => e.key);
+    }
     data.settings.ai = ai;
     await save(data);
     const { resetProvider } = await import('./ai.js');
     resetProvider();
-    return send(res, 200, { ok: true, ai });
+    return send(res, 200, { ok: true });
   }
 
   if (pathname === '/api/admin/competencies/import' && method === 'POST') {

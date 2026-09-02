@@ -458,7 +458,7 @@ function workflowView(root) {
   const datalist = competencySuggestions.length
     ? `<datalist id="competency-options">${competencySuggestions.map((c) => `<option value="${esc(c)}"></option>`).join('')}</datalist>` : '';
   const isCompetencyField = (f) => /competency|topic/i.test(f);
-  const isTos = template.id === 'deped-015-tos';
+  const isTos = template.id === 'deped-015-tos' || template.id === 'tos-v3';
   const tosSelects = {
     'Assessment type': ['Summative Test 1', 'Summative Test 2', 'Full Assessment'],
     'Item format': ['Multiple Choice', 'True/False', 'Matching', 'Mixed'],
@@ -544,7 +544,12 @@ function workflowView(root) {
 
 function slug(s) { return s.replace(/[^a-z0-9]/gi, '-').toLowerCase(); }
 function exampleFor(f) {
-  return ({ quarter: 'e.g. Quarter 2', week: 'e.g. Week 3' })[slug(f)] || `Enter ${f.toLowerCase()}`;
+  const slugged = slug(f);
+  return ({
+    quarter: 'e.g. Quarter 2', week: 'e.g. Week 3',
+    'difficulty-distribution': 'e.g. 60/30/10 (Easy/Average/Difficult)',
+    'cognitive-distribution': 'e.g. R15 U15 Ap10 An10 E5 C5',
+  })[slugged] || `Enter ${f.toLowerCase()}`;
 }
 
 // ---------- Generation flow with progress stages ----------
@@ -635,13 +640,16 @@ function generatingView(root) {
 
 async function openWorkspaceFromResult(result, template, context) {
   // Save as a real document immediately so nothing is lost.
+  const savedContext = result.blueprint
+    ? { ...context, blueprintV3: result.blueprint }
+    : context;
   const doc = await api.createDocument({
     title: result.title || template.name,
     capability: template.capability,
     documentType: template.name,
     status: 'In Progress',
     contentHtml: result.contentHtml,
-    context,
+    context: savedContext,
     references: result.references || [],
     relatedWork: result.relatedWork || [],
     validation: result.validation || null,
@@ -1519,17 +1527,15 @@ async function adminView(root) {
     </div>
 
     <section class="card" style="margin-bottom:20px"><div class="card-heading"><h2>AI provider configuration</h2></div>
-      <p class="card-copy">Set the AI key(s) used for generation. If <code>opencodeKey</code> is set, OpenCode Zen is used; otherwise <code>openaiKey</code> (or any OpenAI-compatible endpoint via the base URL). Keys are stored encrypted-config here and never sent to the browser.</p>
+      <p class="card-copy">Manage the shared AI key pool used by every teacher. Add one or more keys (any OpenAI-compatible endpoint via the base URL); providing several keys is a great way to absorb free-tier limits and avoid "daily allowance" pauses. Keys are stored encrypted and never shown back once saved.</p>
+      <div id="ai-pool-status" class="card-copy" style="margin-top:4px;color:#888"></div>
+      <div id="ai-pool-editor" style="margin-top:8px"></div>
       <form id="adm-aiform" style="margin-top:8px">
-        ${field('OpenCode Zen API key', `<input id="ai-opencode" type="password" placeholder="occ_... ">`, true)}
-        ${field('OpenAI (or compatible) API key', `<input id="ai-openai" type="password" placeholder="sk-...">`, true)}
-        <div class="form-row">
-          ${field('Base URL (optional)', `<input id="ai-baseurl" placeholder="https://api.openai.com/v1">`, true)}
-          ${field('Model (optional)', `<input id="ai-model" placeholder="gpt-4.1-mini">`, true)}
-        </div>
         <p class="card-copy" id="ai-status" style="margin-top:4px"></p>
         <button class="button" type="submit" style="margin-top:8px">Save AI configuration</button>
-      </form></section>
+      </form>
+      <p class="card-copy" style="margin-top:10px;font-size:.85em;color:#777"><strong>Free-tier note:</strong> Most free AI accounts (e.g. Groq) cap tokens per day and per minute. When a key hits its daily cap, the pool automatically rotates to the next key and, if all are capped, teachers briefly see a "try again in ~Xm" message instead of a hard failure. Adding more keys/models increases shared capacity for everyone.</p>
+    </section>
 
     <section class="card" style="margin-bottom:20px"><div class="card-heading"><h2>Import learning competencies</h2></div>
       <p class="card-copy">Paste JSON or CSV rows. CSV format: <code>code, grade, subject, description, quarter</code> — one per line. Duplicates by code are skipped.</p>
@@ -1577,35 +1583,65 @@ S6MT-Ia-c-1, Grade 6, Science, Describe mixtures and compounds, Q1'></textarea>
     importBtn.disabled = false;
   });
 
-  // Load current AI config (left blank unless a key is already set; masked values shown).
+  // Load current AI pool config (masked keys shown; real keys only when includeKeys).
+  const poolEditor = root.querySelector('#ai-pool-editor');
+  const poolStatus = root.querySelector('#ai-pool-status');
+  let poolRows = [];
+  const buildPoolRow = (entry = {}) => {
+    const row = document.createElement('div');
+    row.className = 'form-row';
+    row.style.marginBottom = '6px';
+    row.style.alignItems = 'center';
+    row.dataset.id = entry.id || '';
+    row.innerHTML = `
+      <input class="p-label" placeholder="Label" value="${(entry.label || '').replace(/"/g, '&quot;')}" style="max-width:120px">
+      <input class="p-baseurl" placeholder="Base URL" value="${(entry.baseUrl || '').replace(/"/g, '&quot;')}" style="max-width:210px">
+      <input class="p-model" placeholder="Model" value="${(entry.model || '').replace(/"/g, '&quot;')}" style="max-width:180px">
+      <input class="p-key" type="password" placeholder="${entry.key ? 'unchanged' : 'API key...'}" value="${(entry.key && !entry.key.includes('••••') ? entry.key : '').replace(/"/g, '&quot;')}">
+      <button type="button" class="p-remove button button-small" style="margin-left:4px">Remove</button>`;
+    row.querySelector('.p-remove').addEventListener('click', () => { row.remove(); poolRows = poolRows.filter((r) => r !== row); });
+    return row;
+  };
+  const addPoolRow = (entry) => { const row = buildPoolRow(entry); poolEditor.appendChild(row); poolRows.push(row); };
+
   (async () => {
     try {
-      const cfg = await api.aiConfig(true);
+      const cfg = await api.aiConfig(false);
       const s = cfg.ai || {};
-      if (s.opencodeKey) root.querySelector('#ai-opencode').value = s.opencodeKey;
-      if (s.openaiKey) root.querySelector('#ai-openai').value = s.openaiKey;
-      root.querySelector('#ai-baseurl').value = s.baseUrl || '';
-      root.querySelector('#ai-model').value = s.model || '';
-      const configured = s.opencodeKey ? 'OpenCode Zen key configured in app storage.'
-        : s.openaiKey ? 'OpenAI-compatible key configured in app storage.'
-          : cfg.effectiveEnv?.opencode ? 'OpenCode key configured in Render environment.'
-            : cfg.effectiveEnv?.openai ? 'OpenAI key configured in Render environment.'
-              : 'No AI key is configured yet.';
-      root.querySelector('#ai-status').textContent = configured;
+      const pool = Array.isArray(s.pool) ? s.pool : [];
+      pool.forEach((addPoolRow));
+      if (!pool.length) addPoolRow();
+      const n = pool.length + (cfg.effectiveEnv?.opencode || cfg.effectiveEnv?.openai ? 1 : 0);
+      poolStatus.textContent = n
+        ? `${n} key(s) active (${pool.length} from this form${cfg.effectiveEnv?.opencode || cfg.effectiveEnv?.openai ? ' + 1 from the Render environment' : ''}).`
+        : 'No AI keys configured yet.';
     } catch { /* admin form is optional */ }
   })();
+
+  root.querySelector('#ai-pool-editor').addEventListener('click', (e) => {
+    if (e.target.id === 'ai-add-pool') addPoolRow();
+  });
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.id = 'ai-add-pool';
+  addBtn.className = 'button button-small';
+  addBtn.textContent = '+ Add key';
+  poolEditor.appendChild(addBtn);
 
   root.querySelector('#adm-aiform').addEventListener('submit', async (e) => {
     e.preventDefault();
     root.querySelector('#adm-aiform button[type=submit]').disabled = true;
     try {
-      await api.saveAiConfig({
-        opencodeKey: root.querySelector('#ai-opencode').value,
-        openaiKey: root.querySelector('#ai-openai').value,
-        baseUrl: root.querySelector('#ai-baseurl').value,
-        model: root.querySelector('#ai-model').value,
-      });
+      const pool = poolRows.map((r) => ({
+        id: r.dataset.id || '',
+        label: r.querySelector('.p-label').value,
+        baseUrl: r.querySelector('.p-baseurl').value,
+        model: r.querySelector('.p-model').value,
+        key: r.querySelector('.p-key').value,
+      })).filter((e) => e.label || e.baseUrl || e.model || e.key);
+      await api.saveAiConfig({ pool });
       toast('AI configuration saved.');
+      root.querySelector('#ai-pool-status').textContent = `${pool.length} key(s) active.`;
     } catch (err) {
       toast(err.message);
     }
@@ -1639,6 +1675,7 @@ function helpView(root) {
       <details><summary>Can AI edit part of my document?</summary><p>Yes. Select text in the editor, then choose an action such as Improve, Simplify, or Translate. You always confirm before changes are applied.</p></details>
       <details><summary>Are my documents private?</summary><p>Yes. Only your account can access them, verified server-side on every request.</p></details>
       <details><summary>Does Maestra invent DepEd requirements?</summary><p>No. Official references are only used when available; anything uncertain is labeled as an assumption.</p></details>
+      <details><summary>Sometimes AI says "daily allowance used up" — what does that mean?</summary><p>The AI service is shared by all teachers, and the free tier has a limited number of tokens each day. When that allowance runs out, you'll briefly see a "try again in ~Xm" message; other keys or a refreshed allowance kick in shortly after, so it's temporary and you don't need to do anything.</p></details>
     </div>`;
   bindCommon(root);
 }

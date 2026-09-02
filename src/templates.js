@@ -7,6 +7,13 @@ export function seedTemplates() {
       outputStructure: ['Title', 'TOS', 'Examination Items', 'Answer Key', 'Scoring Guide'], version: '1.0', active: true,
     },
     {
+      id: 'tos-v3', name: 'TOS V3 · Assessment Blueprint Engine', capability: 'Classroom Assessment',
+      description: 'Blueprint-governed TOS with a configurable Difficulty × Cognitive matrix and an item-level blueprint that pins difficulty and cognitive level to every numbered item.',
+      requiredFields: ['Grade level', 'Subject / learning area', 'Term', 'Assessment type', 'Number of items', 'Competencies with teaching days', 'Item format'],
+      optionalFields: ['Difficulty distribution', 'Cognitive distribution'],
+      outputStructure: ['Title', 'Table of Specifications', 'Difficulty × Cognitive Matrices', 'Item Blueprint', 'Examination Items', 'Answer Key', 'Scoring Guide'], version: '3.0', active: true,
+    },
+    {
       id: 'ilaw', name: 'ILAW Lesson Plan', capability: 'Lesson Planning',
       description: 'DepEd ILAW framework (D.O. 016, s. 2026): Intentions, Learning Experience, Assessing Learning, Ways Forward — with Declaration of AI Use.',
       requiredFields: ['Learning competency', 'Topic / competency', 'Term'],

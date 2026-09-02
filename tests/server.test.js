@@ -243,18 +243,18 @@ test('admin can set and read AI config; non-admin cannot', async () => {
   // Save config.
   const save = await api('/api/admin/ai-config', {
     method: 'PUT', cookie: adminCookie,
-    body: { opencodeKey: 'occ_test_key', model: 'x-preview-f-free' },
+    body: { pool: [{ id: 'a', label: 'k1', baseUrl: '', model: 'x-preview-f-free', key: 'occ_test_key' }] },
   });
   assert.equal(save.status, 200);
 
   // Read back — keys masked unless includeKeys.
   const masked = await api('/api/admin/ai-config', { cookie: adminCookie });
   assert.equal(masked.status, 200);
-  assert.equal(masked.data.ai.opencodeKey, '••••••••');
-  assert.equal(masked.data.ai.model, 'x-preview-f-free');
+  assert.equal(masked.data.ai.pool[0].key, '••••••••');
+  assert.equal(masked.data.ai.pool[0].model, 'x-preview-f-free');
 
   const full = await api('/api/admin/ai-config?includeKeys=true', { cookie: adminCookie });
-  assert.equal(full.data.ai.opencodeKey, 'occ_test_key');
+  assert.equal(full.data.ai.pool[0].key, 'occ_test_key');
 
   // Non-admin cannot read or write.
   const nonAdmin = await api('/api/magic-request', { method: 'POST', body: { email: 'teacher-blocked@example.test' } });
@@ -264,7 +264,7 @@ test('admin can set and read AI config; non-admin cannot', async () => {
   const tlogin = await api(`/api/magic/verify?token=${tt}`);
   const teacherCookie = tlogin.headers.get('set-cookie').split(';')[0];
   assert.equal((await api('/api/admin/ai-config', { cookie: teacherCookie })).status, 403);
-  assert.equal((await api('/api/admin/ai-config', { method: 'PUT', cookie: teacherCookie, body: { opencodeKey: 'x' } })).status, 403);
+  assert.equal((await api('/api/admin/ai-config', { method: 'PUT', cookie: teacherCookie, body: { pool: [{ key: 'x' }] } })).status, 403);
 });
 
 // ---------- Billing / monetization toggle ----------

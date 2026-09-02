@@ -41,7 +41,7 @@ function emptyDb() {
     feedback: [],
     auditLog: [],
     settings: {
-      ai: { provider: '', baseUrl: '', model: '', opencodeKey: '', openaiKey: '' },
+      ai: { provider: '', baseUrl: '', model: '', opencodeKey: '', openaiKey: '', pool: [] },
     },
     templates: seedTemplates(),
     knowledge: [],
@@ -89,6 +89,22 @@ function migrate(data) {
   }
   if (!data.settings) data.settings = {};
   if (!data.settings.ai) data.settings.ai = emptyDb().settings.ai;
+  if (!Array.isArray(data.settings.ai.pool)) data.settings.ai.pool = [];
+  // Legacy single-key migration: if a key was stored in openaiKey/opencodeKey (the old
+  // admin config shape) but no pool entry exists, carry it into the pool so the key is
+  // not lost when switching to the pooled model. The legacy field is then cleared.
+  const legacyKey = data.settings.ai.openaiKey || data.settings.ai.opencodeKey;
+  if (legacyKey && data.settings.ai.pool.length === 0) {
+    data.settings.ai.pool.push({
+      id: 'legacy',
+      label: 'Legacy key (auto-migrated)',
+      baseUrl: data.settings.ai.baseUrl || '',
+      model: data.settings.ai.model || '',
+      key: legacyKey,
+    });
+  }
+  delete data.settings.ai.openaiKey;
+  delete data.settings.ai.opencodeKey;
   if (!data.userEntitlements) data.userEntitlements = emptyDb().userEntitlements;
   // Template migration: bundled seeds always win over stale persisted copies of the same id.
   const seedIds = new Set(seedTemplates().map((t) => t.id));

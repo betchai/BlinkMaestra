@@ -2,6 +2,9 @@ import { getProvider } from './ai.js';
 import { knowledgeFor } from './knowledge.js';
 import { routeCapability, relatedCapabilities } from './capabilities.js';
 import { calculateTos, assembleTosHtml, placementLines, normalizeLevel } from './tos.js';
+import { buildAssessmentBlueprint } from './tosv3/index.js';
+import { v3placementLines } from './tosv3/blueprint.js';
+import { renderBlueprintHtml, renderExamHtml } from './tosv3/render.js';
 
 const STAGES = [
   'Understanding your request',
@@ -116,6 +119,7 @@ async function callProvider({ capability, context, profile, refs, settings }) {
 
 export async function runGeneration({ capability, requestedCapability, context = {}, profile = {}, knowledgeStore = [], settings = {}, onStage = () => {} }) {
   if (context.template === 'DepEd 015 TOS & Examination (Beta)') return runTosGeneration({ capability, context, profile, knowledgeStore, settings, onStage });
+  if (context.template === 'TOS V3 · Assessment Blueprint Engine') return runTosV3Generation({ capability, context, profile, knowledgeStore, settings, onStage });
   // Stage 1: intent detection / capability routing
   onStage('Understanding your request');
   let resolved = capability || null;
@@ -378,4 +382,240 @@ ${input}`;
     validationIssues,
     relatedWork: relatedCapabilities('Classroom Assessment'),
   };
+}
+
+// V3 — Assessment Blueprint Engine. Deterministic blueprint (competency weighting,
+// configurable difficulty & cognitive distributions, Difficulty × Cognitive matrix,
+// item-level blueprint), then AI generation constrained to per-item difficulty +
+// cognitive slots, verified by an independent classifier.
+async function runTosV3Generation({ capability, context, profile, knowledgeStore, settings, onStage }) {
+  onStage('Preparing relevant information');
+  const gradeLevel = String(context['Grade level'] || '').trim();
+  const totalItemsInput = Number(context['Number of items']) || 0;
+  const difficultyShare = parseShare(getCtx(context, 'Difficulty distribution'), { Easy: 0.6, Average: 0.3, Difficult: 0.1 });
+  const cognitiveShare = parseCognitiveShare(getCtx(context, 'Cognitive distribution'));
+
+  const blueprintRes = buildAssessmentBlueprint({
+    competencies: context['Competencies with teaching days'],
+    totalItems: totalItemsInput || undefined,
+    gradeLevel,
+    assessmentType: getCtx(context, 'Assessment type') || 'Term Examination',
+    itemFormat: getCtx(context, 'Item format') || 'Multiple Choice',
+    difficultyShare,
+    cognitiveShare,
+  });
+
+  const tos = blueprintRes.assessment;
+  const competencyList = [...new Set(blueprintRes.items.map((item) => item.competency))].join('; ');
+  const slotByNumber = new Map(blueprintRes.items.map((item) => [item.number, item]));
+
+  const itemFormat = tos.itemFormat;
+  const assessmentType = tos.assessmentType;
+  const cleanAssessmentType = itemFormat.toLowerCase() === assessmentType.toLowerCase()
+    ? itemFormat
+    : `${itemFormat} (${assessmentType})`;
+
+  onStage('Generating content');
+  const refs = knowledgeFor('Classroom Assessment', knowledgeStore);
+
+  const buildItemsPrompt = (count, start) => `You are generating examination items for a DepEd 015 classroom assessment (Assessment Blueprint Engine).
+Generate ${count} ${context['Subject / learning area'] || ''} exam item${count === 1 ? '' : 's'} for Grade ${gradeLevel}, Term ${context['Term'] || ''}.
+Item numbers: ${start} to ${start + count - 1}.
+Competencies: ${competencyList}.
+Format: ${cleanAssessmentType}.
+Placement (item number → competency → cognitive level → difficulty):
+${v3placementLines(blueprintRes.items, start, start + count - 1).join('\n')}
+
+Return ONLY a JSON object with a single key "items", an array of ${count} objects. Do NOT add any other keys.
+Each item object has exactly this shape:
+{"number": 1, "stem": "question text", "options": [{"label":"A","text":"option text"},{"label":"B","text":"…"}], "answerLabel": "A", "answerText": "optional short explanation or correct answer text"}
+Rules:
+- Exactly ${count} items with consecutive numbers starting at ${start}.
+- Each item must ACTUALLY test the competency, cognitive level, and difficulty listed for its number in the Placement list. Remembering = recall/define; Understanding = explain/interpret; Applying = use in a scenario; Analyzing = break down/compare/classify; Evaluating = judge/critique; Creating = generate/design.
+- Match the difficulty: Easy items are straightforward; Average items need some reasoning; Difficult items are multi-step or evaluative.
+- For multiple-choice items, include 4 options (A-D). For true/false, 2 options. For short-answer or matching, use options:[] and put the expected answer in answerText.
+- Keep stems concise. Use grade-appropriate language.
+- JSON only. No HTML, no markdown, no headings, no extra text.`;
+
+  const MAX_PER_CALL = 10;
+  const collected = new Map();
+  const extra = new Set();
+
+  async function generateRange(start, end) {
+    const count = end - start + 1;
+    try {
+      const res = await callProvider({
+        capability: 'Classroom Assessment',
+        context: { ...context, _examPrompt: buildItemsPrompt(count, start), template: 'Exam Items Only', 'Number of items': String(count) },
+        profile,
+        refs: refs.map(({ title, type }) => ({ title, type })),
+        settings,
+      });
+      for (const item of extractItems(res)) {
+        const n = Number(item.number ?? item.n);
+        if (Number.isInteger(n) && n >= start && n <= end && (!collected.has(n) || extra.has(n))) collected.set(n, item);
+      }
+    } catch (err) {
+      console.warn(`[tosv3] range ${start}-${end} failed:`, err.message);
+    }
+  }
+
+  function needsFill(n) {
+    const it = collected.get(n);
+    if (!it) return true;
+    return !it.answerLabel && !it.answer && !it.answerText;
+  }
+  function missingNumbers() {
+    const out = [];
+    for (let n = 1; n <= tos.totalItems; n++) if (needsFill(n)) out.push(n);
+    return out;
+  }
+  function badNumbers(extraSet) {
+    const out = [];
+    for (let n = 1; n <= tos.totalItems; n++) if (needsFill(n) || extraSet.has(n)) out.push(n);
+    return out;
+  }
+  async function regenerateBestRun(extraSet) {
+    const missing = badNumbers(extraSet);
+    if (!missing.length) return false;
+    const runs = [[missing[0], missing[0]]];
+    for (let i = 1; i < missing.length; i++) {
+      if (missing[i] === runs[runs.length - 1][1] + 1) runs[runs.length - 1][1] = missing[i];
+      else runs.push([missing[i], missing[i]]);
+    }
+    const best = runs.sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]))[0];
+    console.warn(`[tosv3] regenerating ${best[0]}-${best[1]}`);
+    await new Promise((r) => setTimeout(r, 3000));
+    await generateRange(best[0], best[1]);
+    for (let n = best[0]; n <= best[1]; n++) extraSet.delete(n);
+    return true;
+  }
+
+  for (let start = 1; start <= tos.totalItems; start += MAX_PER_CALL) {
+    await generateRange(start, Math.min(start + MAX_PER_CALL - 1, tos.totalItems));
+    if (start + MAX_PER_CALL <= tos.totalItems) await new Promise((r) => setTimeout(r, 3000));
+  }
+  for (let round = 0; round < 3 && (await regenerateBestRun(extra)); round++) {}
+
+  // Classify each generated item's actual difficulty AND cognitive level vs its slot.
+  async function verifyPlacement(examItems) {
+    const orderedItems = [...examItems].sort((a, b) => (a.number || 0) - (b.number || 0));
+    const input = orderedItems.map((i) => `${i.number}: ${i.stem}`).join('\n');
+    const prompt = `You are verifying a DepEd 015 examination against its Table of Specifications and Assessment Blueprint.
+For EACH numbered item below, classify both:
+- "level": the cognitive process it actually tests. Use exactly one of: Remembering, Understanding, Applying, Analyzing, Evaluating, Creating.
+- "difficulty": exactly one of Easy, Average, Difficult.
+Return ONLY JSON with key "classifications": an array of {"number": <n>, "level": "<level>", "difficulty": "<difficulty>"}, one entry per item.
+
+${input}`;
+    const res = await callProvider({
+      capability: 'Classroom Assessment',
+      context: { ...context, _examPrompt: prompt, template: 'Exam Items Only', 'Number of items': String(orderedItems.length) },
+      profile,
+      refs: refs.map(({ title, type }) => ({ title, type })),
+      settings,
+    });
+    const classifications = Array.isArray(res.classifications) ? res.classifications : [];
+    const mismatches = [];
+    for (const c of classifications) {
+      const n = Number(c.number);
+      const slot = slotByNumber.get(n);
+      const level = normalizeLevel(c.level);
+      const difficulty = normalizeDifficulty(c.difficulty);
+      if (!slot) continue;
+      const badLevel = !level || level === slot.cognitive ? null : { number: n, kind: 'cognitive', expected: slot.cognitive, reported: level };
+      const badDiff = !difficulty || difficulty === slot.difficulty ? null : { number: n, kind: 'difficulty', expected: slot.difficulty, reported: difficulty };
+      if (badLevel) mismatches.push(badLevel);
+      if (badDiff) mismatches.push(badDiff);
+    }
+    return mismatches;
+  }
+
+  const levelMismatches = [];
+  const structurallyComplete = missingNumbers().length === 0;
+  if (structurallyComplete) {
+    onStage('Checking the result');
+    try {
+      for (const m of await verifyPlacement([...collected.values()])) extra.add(m.number);
+      for (let round = 0; round < 3 && (await regenerateBestRun(extra)); round++) {}
+      levelMismatches.push(...(await verifyPlacement([...collected.values()])));
+    } catch (err) {
+      console.warn('[tosv3] placement verification skipped:', err.message);
+    }
+  }
+
+  const examItems = [...collected.values()].sort((a, b) => (a.number || 0) - (b.number || 0));
+  if (!examItems.length) {
+    throw Object.assign(new Error('Item generation returned no usable items. Please try again.'), { status: 502 });
+  }
+
+  const structuralMissing = missingNumbers();
+  const uniqueMismatches = [...new Map(levelMismatches.map((m) => [m.number, m])).values()].sort((a, b) => a.number - b.number);
+  const complete = structuralMissing.length === 0 && uniqueMismatches.length === 0;
+  const subject = String(context['Subject / learning area'] || 'Assessment').trim();
+  const title = subject ? `${subject} Assessment – Grade ${gradeLevel}, Term ${context['Term'] || ''}`.replace(/\s+-\s+$/,'').trim() : 'Assessment Blueprint and Examination';
+
+  const blueprintHtml = renderBlueprintHtml(tos);
+  const examHtml = renderExamHtml(examItems);
+
+  const validationIssues = [];
+  if (structuralMissing.length) validationIssues.push(`Generated ${examItems.length} of ${tos.totalItems} requested items (missing: ${structuralMissing.join(', ')}). Regenerate to fill gaps.`);
+  for (const m of uniqueMismatches) validationIssues.push(`Item ${m.number} was placed at ${labelOf(m.kind, m.reported)}, but the blueprint requires ${labelOf(m.kind, m.expected)}. Regenerate to align this item.`);
+
+  return {
+    title,
+    contentHtml: `<h1>${escHtml(title)}</h1>${blueprintHtml}${examHtml}`,
+    blueprint: tos,
+    validation: complete ? 'passed' : 'uncertain',
+    validationIssues,
+    relatedWork: relatedCapabilities('Classroom Assessment'),
+  };
+}
+
+function getCtx(context, key) { return context[key]; }
+function labelOf(kind, value) { return kind === 'difficulty' ? `${value} difficulty` : value; }
+
+// "60/30/10" or "50/30/20" => {Easy, Average, Difficult} shares. Falls back to default.
+function parseShare(raw, fallback) {
+  const text = String(raw || '').trim();
+  const nums = text.split(/[\/,;\s]+/).map((s) => Number(s)).filter((n) => Number.isFinite(n));
+  if (nums.length === 3 && nums.every((n) => n > 0)) {
+    const sum = nums[0] + nums[1] + nums[2];
+    if (sum > 0) return { Easy: nums[0] / sum, Average: nums[1] / sum, Difficult: nums[2] / sum };
+  }
+  return fallback;
+}
+
+// "R20 U20 Ap20 An20 E10 C10" or fractions/percentages => cognitive shares.
+function parseCognitiveShare(raw) {
+  if (!raw) return undefined;
+  const text = String(raw).trim();
+  const tokens = text.split(/[\/,;\s]+/).filter(Boolean);
+  const out = {};
+  for (const tok of tokens) {
+    const m = tok.match(/^(R|U|Ap|An|E|C|Remember|Understand|Apply|Analyze|Evaluate|Create)\s*[:=]?\s*([\d.]+)%?$/i);
+    if (!m) continue;
+    const key = normCog(m[1]);
+    const val = Number(m[2]);
+    if (key && Number.isFinite(val)) out[key] = val;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+function normCog(label) {
+  const L = String(label).toLowerCase();
+  if (L.startsWith('rem')) return 'Remember';
+  if (L.startsWith('und')) return 'Understand';
+  if (L.startsWith('ap')) return 'Apply';
+  if (L.startsWith('analy')) return 'Analyze';
+  if (L.startsWith('ev')) return 'Evaluate';
+  if (L.startsWith('c')) return 'Create';
+  return null;
+}
+function normalizeDifficulty(label) {
+  const v = String(label ?? '').trim().toLowerCase();
+  if (!v) return null;
+  if (v.startsWith('easy')) return 'Easy';
+  if (v.startsWith('avg') || v.startsWith('average') || v.startsWith('medium')) return 'Average';
+  if (v.startsWith('dif')) return 'Difficult';
+  return null;
 }
