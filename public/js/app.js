@@ -365,15 +365,21 @@ async function startWorkflow(templateId, inheritedContext = {}) {
   const template = templates.find((t) => t.id === templateId);
   if (!template) return toast('That template is unavailable.');
   const profile = state.profile;
+  const useProfileContext = profile.contextEnabled !== false;
 
   // Determine known values from profile + inherited context; ask only for missing required fields.
   const KNOWN = {
-    'Grade level': () => (profile.gradeLevels || []).join(', ') || inheritedContext.gradeLevel,
-    Subject: () => (profile.subjects || []).join(', ') || inheritedContext.subject,
+    'Grade level': () => (useProfileContext && (profile.gradeLevels || []).join(', ')) || inheritedContext.gradeLevel,
+    Subject: () => (useProfileContext && (profile.subjects || []).join(', ')) || inheritedContext.subject,
+    'Subject / learning area': () => (useProfileContext && (profile.subjects || []).join(', ')) || inheritedContext.subject,
+    'Competencies with teaching days': () => inheritedContext.competencies,
+    'Number of items': () => inheritedContext.numberOfItems,
+    'Item format': () => inheritedContext.itemFormat,
+    Term: () => inheritedContext.term || inheritedContext.quarter,
     'Topic / competency': () => inheritedContext.topic,
     Quarter: () => inheritedContext.quarter,
     Week: () => inheritedContext.week,
-    Duration: () => profile.duration,
+    Duration: () => useProfileContext ? profile.duration : undefined,
     Assessmenttype: () => inheritedContext.assessmentType,
     'Assessment type': () => inheritedContext.assessmentType,
   };
@@ -452,9 +458,16 @@ function workflowView(root) {
   const datalist = competencySuggestions.length
     ? `<datalist id="competency-options">${competencySuggestions.map((c) => `<option value="${esc(c)}"></option>`).join('')}</datalist>` : '';
   const isCompetencyField = (f) => /competency|topic/i.test(f);
+  const isTos = template.id === 'deped-015-tos';
+  const tosSelects = {
+    'Assessment type': ['Summative Test 1', 'Summative Test 2', 'Full Assessment'],
+    'Item format': ['Multiple Choice', 'True/False', 'Matching', 'Mixed'],
+  };
   const inputFor = (f) => `<span style="display:flex;gap:7px">
-    <input id="wf-${slug(f)}" placeholder="${esc(exampleFor(f))}" ${isCompetencyField(f) && competencySuggestions.length ? 'list="competency-options"' : ''} style="flex:1">
-    ${isCompetencyField(f) ? `<button type="button" class="tool" data-browse="${esc(f)}" title="Browse the DepEd competency library">Browse…</button>` : ''}
+    ${isTos && f === 'Competencies with teaching days' ? `<span id="wf-tos-competencies" style="display:grid;gap:8px;flex:1"><span class="tos-row" style="display:flex;gap:7px"><input class="tos-name" placeholder="Competency taught" style="flex:1"><button type="button" class="tool tos-remove" title="Remove competency">X</button><input class="tos-days" type="number" min="1" step="1" placeholder="Days taught" style="width:110px"></span><button type="button" class="tool" id="tos-add" style="justify-self:start">+ Add competency</button></span>`
+    : isTos && tosSelects[f] ? `<select id="wf-${slug(f)}" style="flex:1">${tosSelects[f].map((o) => `<option>${o}</option>`).join('')}</select>`
+    : `<input id="wf-${slug(f)}" placeholder="${esc(exampleFor(f))}" ${isCompetencyField(f) && competencySuggestions.length ? 'list="competency-options"' : ''} style="flex:1">`}
+    ${isCompetencyField(f) && !(isTos && f === 'Competencies with teaching days') ? `<button type="button" class="tool" data-browse="${esc(f)}" title="Browse the DepEd competency library">Browse…</button>` : ''}
   </span>`;
   const inputs = [
     ...missing.map((f) => field(f, inputFor(f))),
@@ -503,11 +516,28 @@ function workflowView(root) {
       }
     });
   }));
+  if (isTos) {
+    const list = root.querySelector('#wf-tos-competencies');
+    root.querySelector('#tos-add')?.addEventListener('click', () => {
+      const row = document.createElement('span');
+      row.className = 'tos-row'; row.style.cssText = 'display:flex;gap:7px';
+      row.innerHTML = '<input class="tos-name" placeholder="Competency taught" style="flex:1"><button type="button" class="tool tos-remove" title="Remove competency">X</button><input class="tos-days" type="number" min="1" step="1" placeholder="Days taught" style="width:110px">';
+      list.insertBefore(row, root.querySelector('#tos-add'));
+    });
+    list?.addEventListener('click', (e) => {
+      if (e.target.matches('.tos-remove') && list.querySelectorAll('.tos-row').length > 1) e.target.closest('.tos-row').remove();
+    });
+  }
   root.querySelector('#wf-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const context = { ...values, capability: template.capability, template: template.name };
     missing.forEach((f) => (context[f] = document.getElementById(`wf-${slug(f)}`)?.value.trim()));
     optional.forEach((f) => { const val = document.getElementById(`wf-${slug(f)}`)?.value.trim(); if (val) context[f] = val; });
+    if (isTos) {
+      const rows = [...root.querySelectorAll('.tos-row')].map((row) => `${row.querySelector('.tos-name')?.value.trim()} ${row.querySelector('.tos-days')?.value} days`).filter((row) => row && !row.startsWith('undefined'));
+      if (!rows.length) { toast('Add at least one competency and teaching-day count.'); return; }
+      context['Competencies with teaching days'] = rows.join('; ');
+    }
     runGenerationFlow(context, template);
   });
 }
@@ -1246,16 +1276,8 @@ function renderAdminReport(r) {
         ${!(r.subscribers?.paidAllTime?.byTier || []).length ? '<p class="card-copy">No paid orders yet.</p>' : ''}
       </div>
       <div>
-        <h3 class="card-heading" style="display:block">Documents by template</h3>
-        ${reportBars(r.documents?.byTemplate || [], (i) => i.key)}
-      </div>
-      <div>
         <h3 class="card-heading" style="display:block">Documents by capability</h3>
         ${reportBars(r.documents?.byCapability || [], (i) => i.key)}
-      </div>
-      <div>
-        <h3 class="card-heading" style="display:block">Top subjects</h3>
-        ${reportBars(r.documents?.bySubject || [], (i) => i.key)}
       </div>
       <div>
         <h3 class="card-heading" style="display:block">Generations by template</h3>
@@ -1283,6 +1305,33 @@ function renderAdminReport(r) {
         </table>
       </div>
     </div>
+    <div style="margin-top:28px">
+      <h3 class="card-heading" style="display:block;margin-bottom:12px">User listing &amp; document generation</h3>
+      <div style="background:white;border:1px solid var(--line);border-radius:12px;overflow:x-auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;text-align:left">
+          <thead>
+            <tr style="border-bottom:1px solid var(--line);background:#f8faf9">
+              <th style="padding:10px 14px;font-weight:600">Email</th>
+              <th style="padding:10px 14px;font-weight:600">Role</th>
+              <th style="padding:10px 14px;font-weight:600">Tier / Status</th>
+              <th style="padding:10px 14px;font-weight:600;text-align:right">Documents Generated</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(r.userList || []).map((u) => `
+              <tr style="border-bottom:1px solid var(--line)">
+                <td style="padding:10px 14px"><strong>${esc(u.email)}</strong><br><small style="opacity:.6">Joined ${new Date(u.createdAt).toLocaleDateString()}</small></td>
+                <td style="padding:10px 14px"><span class="tag" style="text-transform:capitalize">${esc(u.role)}</span></td>
+                <td style="padding:10px 14px">${esc(u.tier)}</td>
+                <td style="padding:10px 14px;text-align:right"><strong>${u.documentsCount}</strong></td>
+              </tr>
+            `).join('')}
+            ${!(r.userList || []).length ? '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--muted)">No users found.</td></tr>' : ''}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <p class="card-copy" style="margin-top:16px;font-size:12px;opacity:.7">Generated ${new Date(r.generatedAt).toLocaleString()} · free allowance ${r.plan?.freeAllowance ?? 5} per teacher.</p>
   `;
 }
@@ -1442,9 +1491,12 @@ S6MT-Ia-c-1, Grade 6, Science, Describe mixtures and compounds, Q1'></textarea>
       if (s.openaiKey) root.querySelector('#ai-openai').value = s.openaiKey;
       root.querySelector('#ai-baseurl').value = s.baseUrl || '';
       root.querySelector('#ai-model').value = s.model || '';
-      const envNote = (cfg.effectiveEnv?.opencode ? 'OpenCode key present in server env; ' : '')
-        + (cfg.effectiveEnv?.openai ? 'OpenAI key present in server env.' : '');
-      root.querySelector('#ai-status').textContent = envNote || 'No AI key is configured yet.';
+      const configured = s.opencodeKey ? 'OpenCode Zen key configured in app storage.'
+        : s.openaiKey ? 'OpenAI-compatible key configured in app storage.'
+          : cfg.effectiveEnv?.opencode ? 'OpenCode key configured in Render environment.'
+            : cfg.effectiveEnv?.openai ? 'OpenAI key configured in Render environment.'
+              : 'No AI key is configured yet.';
+      root.querySelector('#ai-status').textContent = configured;
     } catch { /* admin form is optional */ }
   })();
 

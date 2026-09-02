@@ -37,21 +37,52 @@ class OpenAiCompatibleProvider {
       ],
       ...(useJsonFormat ? { response_format: { type: 'json_object' } } : {}),
     });
-    let response = await this.#request(build(this.supportsJsonResponseFormat));
-    if (!response.ok && this.supportsJsonResponseFormat && response.status === 400) {
-      // Provider doesn't support response_format — retry without it.
-      response = await this.#request(build(false));
+    return this.#attempt(build);
+  }
+
+  // Retry transient failures (429 rate limits, 5xx) with backoff. For rate limits
+  // we honor the provider's suggested wait time when it is present.
+  async #attempt(build, attempts = 3) {
+    for (let i = 0; i < attempts; i++) {
+      let response = await this.#request(build(this.supportsJsonResponseFormat));
+      if (response.ok) {
+        const out = await response.json();
+        const raw = out.choices?.[0]?.message?.content;
+        if (!raw) throw Object.assign(new Error('We could not validate the generated document. Please try again.'), { status: 502 });
+        return { raw, usage: out.usage || null };
+      }
+      if (response.status === 400 && this.supportsJsonResponseFormat) {
+        // Provider doesn't support response_format — try once without it, then fail through normal flow.
+        this.supportsJsonResponseFormat = false;
+        response = await this.#request(build(false));
+        if (response.ok) {
+          const out = await response.json();
+          const raw = out.choices?.[0]?.message?.content;
+          if (!raw) throw Object.assign(new Error('We could not validate the generated document. Please try again.'), { status: 502 });
+          return { raw, usage: out.usage || null };
+        }
+      }
+      if (response.status !== 429 && response.status < 500) {
+        throw await this.#mapError(response, i < attempts - 1);
+      }
+      const wait = await this.#waitSeconds(response);
+      if (i < attempts - 1) await new Promise((resolve) => setTimeout(resolve, wait));
+      else throw await this.#mapError(response, false);
     }
-    // Free/shared models intermittently return 429/5xx. Retry once after a short pause.
-    if (!response.ok && (response.status === 429 || response.status >= 500)) {
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-      response = await this.#request(build(this.supportsJsonResponseFormat));
-    }
-    if (!response.ok) throw await this.#mapError(response);
-    const out = await response.json();
-    const raw = out.choices?.[0]?.message?.content;
-    if (!raw) throw Object.assign(new Error('We could not validate the generated document. Please try again.'), { status: 502 });
-    return { raw, usage: out.usage || null };
+    throw Object.assign(new Error('AI is temporarily unavailable. Please try again.'), { status: 502 });
+  }
+
+  // For 429 responses, parse the provider's suggested retry time (e.g. "try again in 14.1975s").
+  async #waitSeconds(response) {
+    const header = Number(response.headers?.get?.('retry-after'));
+    if (header > 0) return Math.min(header, 30) * 1000;
+    try {
+      const body = await response.clone().json();
+      const message = body.error?.message || '';
+      const match = message.match(/try again in ([\d.]+)\s*s/i);
+      if (match) return Math.min(Number(match[1]), 30) * 1000;
+    } catch {}
+    return 4000;
   }
 
   async #request(payload) {

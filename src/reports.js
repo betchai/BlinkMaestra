@@ -4,7 +4,7 @@
 // mutates state, so it is safe to call frequently from the admin UI.
 
 import { db } from './db.js';
-import { PLAN, paymentsEnabledAsync } from './billing.js';
+import { PLAN, paymentsEnabledAsync, activeSubscription } from './billing.js';
 
 function daysAgoIso(n) {
   return new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
@@ -135,11 +135,56 @@ export async function report() {
     last30: buckets(docs, (d) => d.createdAt, 30),
   };
 
+  // ---- Users listing with tier & document count ----
+  const docCountsByOwner = {};
+  for (const d of (data.documents || [])) {
+    if (d.deletedAt) continue;
+    const owner = d.ownerId;
+    if (owner) {
+      docCountsByOwner[owner] = (docCountsByOwner[owner] || 0) + 1;
+    }
+  }
+
+  const userList = [];
+  for (const u of users) {
+    const ent = ents[u.id] || { freeUsed: 0, subscriptions: [] };
+    const docCount = docCountsByOwner[u.id] || 0;
+    
+    let tierName = 'Free';
+    if (u.role === 'admin') {
+      tierName = 'Admin';
+    } else if (!paymentsEnabled) {
+      tierName = 'Payments Off (Unlimited)';
+    } else {
+      const active = activeSubscription(ent);
+      if (active) {
+        tierName = `${active.months}-month Subscription`;
+      } else if ((ent.freeUsed || 0) >= PLAN.freeAllowance) {
+        tierName = 'Limited (Free allowance used)';
+      } else {
+        tierName = `Free Trial (${ent.freeUsed || 0}/${PLAN.freeAllowance})`;
+      }
+    }
+
+    userList.push({
+      id: u.id,
+      email: u.email,
+      role: u.role || 'teacher',
+      tier: tierName,
+      documentsCount: docCount,
+      createdAt: u.createdAt,
+    });
+  }
+
+  // Sort by document count desc, then email asc
+  userList.sort((a, b) => b.documentsCount - a.documentsCount || a.email.localeCompare(b.email));
+
   return {
     generatedAt: new Date().toISOString(),
     paymentsEnabled,
     plan: { perMonth: PLAN.perMonth, freeAllowance: PLAN.freeAllowance, currency: PLAN.currency },
     users: { total: users.length, teachers: teachers.length, admins: admins.length },
+    userList,
     subscribers: {
       active: { total: activeNow.size, byTier: activeByTier },
       paidAllTime: { total: paidOrders.length, byTier: paidByTier },

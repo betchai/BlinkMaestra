@@ -1,6 +1,12 @@
 export function seedTemplates() {
   return [
     {
+      id: 'deped-015-tos', name: 'DepEd 015 TOS & Examination (Beta)', capability: 'Classroom Assessment',
+      description: 'Deterministic Table of Specifications and compact examination generator.',
+      requiredFields: ['Grade level', 'Subject / learning area', 'Term', 'Assessment type', 'Number of items', 'Competencies with teaching days', 'Item format'], optionalFields: [],
+      outputStructure: ['Title', 'TOS', 'Examination Items', 'Answer Key', 'Scoring Guide'], version: '1.0', active: true,
+    },
+    {
       id: 'ilaw', name: 'ILAW Lesson Plan', capability: 'Lesson Planning',
       description: 'DepEd ILAW framework (D.O. 016, s. 2026): Intentions, Learning Experience, Assessing Learning, Ways Forward — with Declaration of AI Use.',
       requiredFields: ['Learning competency', 'Topic / competency', 'Term'],

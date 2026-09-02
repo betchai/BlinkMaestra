@@ -416,7 +416,11 @@ test('admin report endpoint is admin-only and returns expected insight structure
   const d = r.data;
   assert.ok(Number.isInteger(d.users.total));
   assert.ok(typeof d.documents.total === 'number');
-  assert.ok(Array.isArray(d.documents.byTemplate));
+  assert.ok(Array.isArray(d.userList));
+  assert.ok(d.userList.length > 0);
+  assert.ok(typeof d.userList[0].email === 'string');
+  assert.ok(typeof d.userList[0].tier === 'string');
+  assert.ok(typeof d.userList[0].documentsCount === 'number');
   assert.ok(Array.isArray(d.documents.byCapability));
   assert.ok(Array.isArray(d.generations.byTemplate));
   assert.ok(r.data.documents.last7 && typeof r.data.documents.last7 === 'object');
