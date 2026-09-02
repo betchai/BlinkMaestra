@@ -404,6 +404,35 @@ test('signing in on a new device revokes the previous session (account-sharing d
 });
 
 // ---------- Admin report / analytics ----------
+test('admin and non-admin report endpoint permissions', async () => {
+  const teacher = await registerUser('report-teacher');
+  assert.equal((await api('/api/admin/activity', { cookie: teacher.cookie })).status, 403);
+
+  const adminCookie = await adminLogin();
+  const r = await api('/api/admin/activity', { cookie: adminCookie });
+  assert.equal(r.status, 200);
+  assert.ok(Array.isArray(r.data.items));
+  assert.ok(Array.isArray(r.data.teachers));
+  assert.ok(Array.isArray(r.data.capabilities));
+});
+
+test('admin activity feed lists the documents teachers generated', async () => {
+  const teacher = await registerUser('act-teacher');
+  const created = (await api('/api/documents', { method: 'POST', cookie: teacher.cookie, body: { title: 'My Graded Quiz', capability: 'Classroom Assessment', contentHtml: '<h1>Quiz one</h1>' } })).data.document;
+  assert.ok(created);
+
+  const adminCookie = await adminLogin();
+  const feed = (await api('/api/admin/activity', { cookie: adminCookie })).data;
+  const match = (feed.items || []).find((d) => d.id === created.id);
+  assert.ok(match, 'generated document should appear in the admin activity feed');
+  assert.equal(match.title, 'My Graded Quiz');
+  assert.equal(match.capability, 'Classroom Assessment');
+  assert.ok(match.contentHtml.includes('Quiz one'));
+  assert.equal(match.ownerId, teacher.userId);
+  assert.ok(match.teacherEmail);
+  assert.ok((feed.teachers || []).includes(match.teacherEmail));
+});
+
 test('admin report endpoint is admin-only and returns expected insight structure', async () => {
   // Non-admin is blocked.
   const teacher = await registerUser('report-teacher');

@@ -204,6 +204,37 @@ export async function report() {
   };
 }
 
+// Admin "Teacher Activity" feed: every document teachers have generated, newest
+// first, with the owning teacher's email/name and full content for preview.
+// Read-only; admin-only. Returns just the feed so clients can load it lazily
+// without pulling the entire heavier report payload.
+export async function activity() {
+  const data = await db();
+  const users = data.users || [];
+  return (data.documents || [])
+    .filter((d) => !d.deletedAt)
+    .map((d) => {
+      const owner = users.find((u) => u.id === d.ownerId);
+      return {
+        id: d.id,
+        ownerId: d.ownerId,
+        teacherEmail: owner?.email || '',
+        teacherName: owner?.name || '',
+        title: d.title || '',
+        capability: d.capability || 'General',
+        documentType: d.documentType || 'Document',
+        status: d.status || 'Draft',
+        createdAt: d.createdAt,
+        updatedAt: d.updatedAt,
+        contentHtml: d.contentHtml || '',
+        context: d.context || {},
+        references: d.references || [],
+        validation: d.validation || null,
+      };
+    })
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
 function buckets(list, isoExtract, days = 7) {
   const result = {};
   for (const day of lastNDays(days)) result[day] = 0;

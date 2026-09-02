@@ -1347,6 +1347,100 @@ async function renderAdminReportsTab(body) {
   }
 }
 
+// Renders the Admin -> Teacher activity tab: a feed of every document teachers
+// have generated, with a content preview and a full-document view.
+async function renderAdminActivityTab(body) {
+  const filters = state.route.filters || {};
+  const buildQuery = (over = {}) => {
+    const merged = { q: filters.q, teacher: filters.teacher, capability: filters.capability, ...over };
+    return merged;
+  };
+  const rerender = () => renderAdminActivityTab(body);
+
+  body.innerHTML = `<p class="card-copy">Loading teacher activity…</p>`;
+  let data;
+  try {
+    data = await api.activity(buildQuery());
+  } catch {
+    body.innerHTML = '<p class="card-copy">Could not load teacher activity.</p>';
+    return;
+  }
+
+  const items = data.items || [];
+  const capabilities = data.capabilities || [];
+  const teachers = data.teachers || [];
+
+  // Build a plain-text preview from the document HTML.
+  const preview = (html, len = 180) => {
+    const text = String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    return text.length > len ? `${text.slice(0, len)}…` : text;
+  };
+
+  body.innerHTML = `
+    <p class="subtitle">Every document teachers have generated, newest first. You can preview or open each one.</p>
+    <section class="card" style="margin-bottom:16px">
+      <form id="act-filters" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <input id="act-q" placeholder="Search title or content…" value="${esc(filters.q || '')}" style="flex:1;min-width:180px">
+        <select id="act-teacher" style="min-width:160px">
+          <option value="">All teachers</option>
+          ${teachers.map((t) => `<option value="${esc(t)}"${filters.teacher === t ? ' selected' : ''}>${esc(t)}</option>`).join('')}
+        </select>
+        <select id="act-capability" style="min-width:160px">
+          <option value="">All capabilities</option>
+          ${capabilities.map((c) => `<option value="${esc(c)}"${filters.capability === c ? ' selected' : ''}>${esc(c)}</option>`).join('')}
+        </select>
+        <button class="button" type="submit">Filter</button>
+        ${(filters.q || filters.teacher || filters.capability) ? '<button type="button" class="tool" id="act-clear">Clear</button>' : ''}
+      </form>
+    </section>
+    <section class="card">
+      <div class="card-heading"><h2>Generated documents <span style="font-weight:400;opacity:.6">(${items.length})</span></h2></div>
+      ${items.length ? `<div>${items.map((d) => activityRow(d, preview(d.contentHtml))).join('')}</div>`
+        : '<p class="card-copy">No documents found for this filter.</p>'}
+    </section>`;
+
+  const apply = () => {
+    const next = buildQuery({
+      q: body.querySelector('#act-q').value.trim(),
+      teacher: body.querySelector('#act-teacher').value,
+      capability: body.querySelector('#act-capability').value,
+    });
+    state.route.filters = next;
+    rerender();
+  };
+  body.querySelector('#act-filters').addEventListener('submit', (e) => { e.preventDefault(); apply(); });
+  body.querySelector('#act-clear')?.addEventListener('click', () => { state.route.filters = {}; rerender(); });
+
+  // Open a full document in a modal (rendered HTML, read-only).
+  body.querySelectorAll('[data-activity-view]').forEach((b) => b.addEventListener('click', () => {
+    const item = items.find((d) => d.id === b.dataset.activityView);
+    if (!item) return;
+    const overlay = modal(`<div class="modal-box" style="width:min(760px,100%)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+        <div><h2 style="margin:0">${esc(item.title || 'Untitled')}</h2>
+        <p class="card-copy" style="margin:4px 0 0">${esc(item.teacherName || item.teacherEmail)} · ${esc(item.capability)} · ${new Date(item.createdAt).toLocaleString()}</p></div>
+        <button class="tool" data-close>✕</button>
+      </div>
+      <div class="document-content" style="margin-top:12px;border:1px solid var(--line);border-radius:12px;padding:20px;max-height:64vh;overflow:auto">${item.contentHtml}</div>
+      <div class="modal-footer" style="margin-top:16px"><button class="button ghost" data-close>Close</button></div>
+    </div>`);
+    overlay.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => overlay.remove()));
+  }));
+}
+
+function activityRow(d, previewText) {
+  const tag = (label, tone = '') => `<span class="tag"${tone ? ` style="background:${tone.bg};color:${tone.fg}"` : ''}>${esc(label)}</span>`;
+  return `<div class="deadline" style="margin-bottom:8px">
+    <div style="flex:1">
+      <strong>${esc(d.title || 'Untitled document')}</strong>
+      ${tag(d.capability)}
+      ${d.status ? tag(d.status) : ''}
+      <small>${esc(d.teacherName || d.teacherEmail || 'teacher')} · ${new Date(d.createdAt).toLocaleString()}<br>${esc(d.teacherEmail || '')}${previewText ? ` · ${esc(previewText)}` : ''}</small>
+    </div>
+    <button class="tool" data-activity-view="${esc(d.id)}">Open</button>
+  </div>`;
+}
+
 // Renders the Admin -> Payments & subscriptions tab.
 async function renderAdminPaymentsTab(body, ov) {
   const enabled = !!ov?.payments?.enabled;
@@ -1403,7 +1497,7 @@ async function adminView(root) {
   const tab = state.route.tab || 'overview';
   root.innerHTML = `<p class="eyebrow">Administration</p><h1 class="title">System management</h1>
     <div class="admin-tabs" role="tablist">
-      ${[['overview', 'Overview'], ['payments', 'Payments & subscriptions'], ['reports', 'Reports & insights']].map(([id, label]) =>
+      ${[['overview', 'Overview'], ['activity', 'Teacher activity'], ['payments', 'Payments & subscriptions'], ['reports', 'Reports & insights']].map(([id, label]) =>
         `<button data-tab="${id}" class="${tab === id ? 'active' : ''}">${label}</button>`).join('')}
     </div><div id="admin-body"></div>`;
 
@@ -1412,6 +1506,7 @@ async function adminView(root) {
   // Tab navigation (shared).
   root.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => go({ name: 'admin', tab: b.dataset.tab })));
 
+  if (tab === 'activity') { renderAdminActivityTab(body); return; }
   if (tab === 'reports') { renderAdminReportsTab(body); return; }
   if (tab === 'payments') { renderAdminPaymentsTab(body, ov); return; }
 

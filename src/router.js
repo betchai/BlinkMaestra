@@ -2,7 +2,7 @@ import { db, save } from './db.js';
 import * as auth from './auth.js';
 import * as docs from './documents.js';
 import * as billing from './billing.js';
-import { report as computeReport } from './reports.js';
+import { report as computeReport, activity as getActivity } from './reports.js';
 import { runGeneration, pipelineStages } from './pipeline.js';
 import { listTemplates, CAPABILITIES, routeCapability, relatedCapabilities } from './capabilities.js';
 import { knowledgeFor, CATEGORIES } from './knowledge.js';
@@ -199,6 +199,36 @@ export async function handleApi(req, res, pathname) {
     const user = data.users.find((u) => u.id === id);
     if (!requireAdmin(user, res)) return;
     return send(res, 200, await computeReport());
+  }
+
+  // ---------- Admin Teacher Activity feed ----------
+  // Lists every document teachers have generated (title, teacher, capability, date,
+  // content preview) so an admin can see what other teachers are producing.
+  if (pathname === '/api/admin/activity' && method === 'GET') {
+    const id = await requireUser(req, res); if (!id) return;
+    const data = await db();
+    const user = data.users.find((u) => u.id === id);
+    if (!requireAdmin(user, res)) return;
+    const feed = await getActivity();
+    const url = new URL(req.url, 'http://x');
+    const q = (url.searchParams.get('q') || '').trim().toLowerCase();
+    const teacher = (url.searchParams.get('teacher') || '').trim().toLowerCase();
+    const capability = (url.searchParams.get('capability') || '').trim();
+    let items = feed;
+    if (teacher) items = items.filter((d) => String(d.teacherEmail).toLowerCase().includes(teacher) || String(d.teacherName).toLowerCase().includes(teacher));
+    if (capability) items = items.filter((d) => d.capability.toLowerCase() === capability.toLowerCase());
+    if (q) {
+      items = items.filter((d) =>
+        String(d.title).toLowerCase().includes(q)
+        || String(d.contentHtml).toLowerCase().includes(q)
+        || String(d.teacherEmail).toLowerCase().includes(q));
+    }
+    // Distinct teachers & capabilities present in the full feed, for filter menus.
+    return send(res, 200, {
+      items,
+      teachers: [...new Set(feed.map((d) => d.teacherEmail).filter(Boolean))].sort(),
+      capabilities: [...new Set(feed.map((d) => d.capability).filter(Boolean))].sort(),
+    });
   }
 
   // ---------- Admin AI configuration ----------

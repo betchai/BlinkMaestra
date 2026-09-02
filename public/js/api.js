@@ -40,6 +40,14 @@ export const api = {
   rejectOrder: (id, reason) => request(`/api/admin/billing/orders/${id}/reject`, { method: 'POST', body: { reason } }),
   setPaymentsEnabled: (enabled) => request('/api/admin/billing/payments-toggle', { method: 'POST', body: { enabled } }),
   report: () => request('/api/admin/report'),
+  activity: (query = {}) => {
+    const qs = new URLSearchParams();
+    if (query.q) qs.set('q', query.q);
+    if (query.teacher) qs.set('teacher', query.teacher);
+    if (query.capability) qs.set('capability', query.capability);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request(`/api/admin/activity${suffix}`);
+  },
 
   documents: () => request('/api/documents').then((r) => r.documents),
   document: (id) => request(`/api/documents/${id}`).then((r) => r.document),
