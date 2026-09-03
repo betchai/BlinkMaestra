@@ -466,12 +466,23 @@ function workflowView(root) {
   const isCompetencyField = (f) => /competency|topic/i.test(f);
   const isTos = template.id === 'deped-015-tos' || template.id === 'tos-v3';
   const isDeped015 = template.id === 'deped-015-tos';
+  let savedCompetencyList = [];
   const tosSelects = {
     'Assessment type': ['Summative Test 1', 'Summative Test 2', 'Full Assessment'],
     'Item format': ['Multiple Choice', 'True/False', 'Matching', 'Mixed'],
   };
+  const tosCompetencyDatalist = (id) => `<datalist id="${id}">${savedCompetencyList.map((c) => `<option value="${esc(`${c.description} (${c.code})`)}"></option>`).join('')}</datalist>`;
   const inputFor = (f) => `<span style="display:flex;gap:7px">
-    ${isTos && f === 'Competencies with teaching days' ? `<span id="wf-tos-competencies" style="display:grid;gap:8px;flex:1"><span class="tos-row" style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">${isDeped015 ? '<select class="tos-name-select" style="flex:1;min-width:200px"><option value="">— Select a competency —</option><option value="__custom__">Custom (type below)</option></select><input class="tos-name tos-name-custom" placeholder="Type or paste competency" style="flex:1;display:none"><button type="button" class="tool tos-browse" title="Browse the DepEd competency library">Browse…</button>' : '<input class="tos-name" placeholder="Competency taught" style="flex:1">'}<button type="button" class="tool tos-remove" title="Remove competency">X</button><input class="tos-days" type="number" min="1" step="1" placeholder="Days taught" style="width:110px"></span><button type="button" class="tool" id="tos-add" style="justify-self:start">+ Add competency</button></span>`
+    ${isTos && f === 'Competencies with teaching days' ? `<span id="wf-tos-competencies" style="display:grid;gap:8px;flex:1">${isDeped015
+        ? `<span class="tos-row" style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;position:relative">
+             <input class="tos-name" list="tos-competency-options" placeholder="Select or type a competency…" style="flex:1">
+             <button type="button" class="tool tos-browse" title="Browse the DepEd competency library">Browse…</button>
+             <button type="button" class="tool tos-remove" title="Remove competency">X</button>
+             <input class="tos-days" type="number" min="1" step="1" placeholder="Days taught" style="width:110px">
+           </span>${tosCompetencyDatalist('tos-competency-options')}${tosCompetencyDatalist('tos-competency-options-add')}`
+        : `<span class="tos-row" style="display:flex;gap:7px"><input class="tos-name" placeholder="Competency taught" style="flex:1"><button type="button" class="tool tos-remove" title="Remove competency">X</button><input class="tos-days" type="number" min="1" step="1" placeholder="Days taught" style="width:110px"></span>`}
+        <button type="button" class="tool" id="tos-add" style="justify-self:start">+ Add competency</button>
+      </span>`
     : isTos && tosSelects[f] ? `<select id="wf-${slug(f)}" style="flex:1">${tosSelects[f].map((o) => `<option>${o}</option>`).join('')}</select>`
     : `<input id="wf-${slug(f)}" placeholder="${esc(exampleFor(f))}" ${isCompetencyField(f) && competencySuggestions.length ? 'list="competency-options"' : ''} style="flex:1">`}
     ${isCompetencyField(f) && !(isTos && f === 'Competencies with teaching days') ? `<button type="button" class="tool" data-browse="${esc(f)}" title="Browse the DepEd competency library">Browse…</button>` : ''}
@@ -532,77 +543,42 @@ function workflowView(root) {
         .then((r) => r.json())
         .then((data) => {
           savedCompetencyMap = Object.fromEntries(data.competencies.filter((c) => savedCodes.includes(c.code)).map((c) => [c.code, c]));
-          const opts = Object.values(savedCompetencyMap).map((c) => `<option value="${esc(c.code)}">${esc(c.description)} (${esc(c.code)})</option>`).join('');
-          list.querySelectorAll('.tos-name-select').forEach((sel) => {
-            if (!sel.dataset.built) {
-              sel.innerHTML = `<option value="">— Select a competency —</option>${opts}<option value="__custom__">Custom (type below)</option>`;
-              sel.dataset.built = '1';
-            }
-          });
+          const opts = Object.values(savedCompetencyMap).map((c) => `<option value="${esc(`${c.description} (${c.code})`)}"></option>`).join('');
+          const dl = list.querySelector('#tos-competency-options');
+          if (dl) dl.innerHTML = opts;
+          const dlAdd = list.querySelector('#tos-competency-options-add');
+          if (dlAdd) dlAdd.innerHTML = opts;
         })
         .catch(() => {});
     }
     function buildTosRowHtml() {
       if (isDeped015) {
-        return `<span class="tos-row" style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">
-          <select class="tos-name-select" style="flex:1;min-width:200px"><option value="">— Select a competency —</option><option value="__custom__">Custom (type below)</option></select>
-          <input class="tos-name tos-name-custom" placeholder="Type or paste competency" style="flex:1;display:none">
+        return `<span class="tos-row" style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;position:relative">
+          <input class="tos-name" list="tos-competency-options-add" placeholder="Select or type a competency…" style="flex:1">
           <button type="button" class="tool tos-browse" title="Browse the DepEd competency library">Browse…</button>
           <button type="button" class="tool tos-remove" title="Remove competency">X</button>
-          <input class="tos-days" type="number" min="1" step="1" placeholder="Days taught" style="width:110px"></span>`;
+          <input class="tos-days" type="number" min="1" step="1" placeholder="Days taught" style="width:110px">
+        </span>`;
       }
       return `<span class="tos-row" style="display:flex;gap:7px"><input class="tos-name" placeholder="Competency taught" style="flex:1"><button type="button" class="tool tos-remove" title="Remove competency">X</button><input class="tos-days" type="number" min="1" step="1" placeholder="Days taught" style="width:110px"></span>`;
     }
-    function wireRowEvents(row) {
-      if (isDeped015) {
-        const sel = row.querySelector('.tos-name-select');
-        const custom = row.querySelector('.tos-name-custom');
-        const browseBtn = row.querySelector('.tos-browse');
-        if (sel && custom) {
-          sel.addEventListener('change', () => { custom.style.display = sel.value === '__custom__' ? '' : 'none'; if (sel.value && sel.value !== '__custom__') custom.value = ''; });
-          custom.addEventListener('input', () => { sel.value = '__custom__'; });
-        }
-        if (browseBtn) {
-          browseBtn.addEventListener('click', () => {
-            openCompetencyPicker(({ code, description }) => {
-              if (sel && custom) {
-                if (savedCompetencyMap[code]) {
-                  sel.value = code;
-                  custom.style.display = 'none';
-                  custom.value = '';
-                } else {
-                  sel.value = '__custom__';
-                  custom.style.display = '';
-                  custom.value = `${description} (${code})`;
-                }
-              }
-            });
-          });
-        }
+    list?.addEventListener('click', (e) => {
+      if (e.target.matches('.tos-remove') && list.querySelectorAll('.tos-row').length > 1) e.target.closest('.tos-row').remove();
+      if (e.target.matches('.tos-browse')) {
+        const row = e.target.closest('.tos-row');
+        const input = row?.querySelector('.tos-name');
+        openCompetencyPicker(({ code, description }) => {
+          if (input) {
+            input.value = `${description} (${code})`;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        });
       }
-    }
-    function populateRowDropdowns() {
-      if (!isDeped015 || !Object.keys(savedCompetencyMap).length) return;
-      const opts = Object.values(savedCompetencyMap).map((c) => `<option value="${esc(c.code)}">${esc(c.description)} (${esc(c.code)})</option>`).join('');
-      list.querySelectorAll('.tos-name-select').forEach((sel) => {
-        if (sel.dataset.built) return;
-        const current = sel.getAttribute('data-value') || '';
-        sel.innerHTML = `<option value="">— Select a competency —</option>${opts}<option value="__custom__">Custom (type below)</option>`;
-        if (current) sel.value = current;
-        sel.dataset.built = '1';
-      });
-    }
-    list.querySelectorAll('.tos-row').forEach(wireRowEvents);
+    });
     root.querySelector('#tos-add')?.addEventListener('click', () => {
       const row = document.createElement('span');
       row.innerHTML = buildTosRowHtml();
-      const rowEl = row.firstElementChild;
-      wireRowEvents(rowEl);
-      list.insertBefore(rowEl, root.querySelector('#tos-add'));
-      setTimeout(populateRowDropdowns, 0);
-    });
-    list?.addEventListener('click', (e) => {
-      if (e.target.matches('.tos-remove') && list.querySelectorAll('.tos-row').length > 1) e.target.closest('.tos-row').remove();
+      list.insertBefore(row.firstElementChild, root.querySelector('#tos-add'));
     });
   }
   root.querySelector('#wf-form').addEventListener('submit', async (e) => {
@@ -612,18 +588,7 @@ function workflowView(root) {
     optional.forEach((f) => { const val = document.getElementById(`wf-${slug(f)}`)?.value.trim(); if (val) context[f] = val; });
     if (isTos) {
       const rows = [...root.querySelectorAll('.tos-row')].map((row) => {
-        let compName;
-        if (isDeped015) {
-          const sel = row.querySelector('.tos-name-select');
-          const custom = row.querySelector('.tos-name-custom');
-          if (sel && sel.value && sel.value !== '__custom__') {
-            compName = sel.options[sel.selectedIndex]?.textContent || sel.value;
-          } else {
-            compName = custom?.value.trim() || '';
-          }
-        } else {
-          compName = row.querySelector('.tos-name')?.value.trim() || '';
-        }
+        const compName = row.querySelector('.tos-name')?.value.trim() || '';
         return `${compName} ${row.querySelector('.tos-days')?.value} days`;
       }).filter((row) => {
         const daysMatch = row.match(/(\d+)\s+days$/);
