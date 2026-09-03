@@ -465,12 +465,13 @@ function workflowView(root) {
     ? `<datalist id="competency-options">${competencySuggestions.map((c) => `<option value="${esc(c)}"></option>`).join('')}</datalist>` : '';
   const isCompetencyField = (f) => /competency|topic/i.test(f);
   const isTos = template.id === 'deped-015-tos' || template.id === 'tos-v3';
+  const isDeped015 = template.id === 'deped-015-tos';
   const tosSelects = {
     'Assessment type': ['Summative Test 1', 'Summative Test 2', 'Full Assessment'],
     'Item format': ['Multiple Choice', 'True/False', 'Matching', 'Mixed'],
   };
   const inputFor = (f) => `<span style="display:flex;gap:7px">
-    ${isTos && f === 'Competencies with teaching days' ? `<span id="wf-tos-competencies" style="display:grid;gap:8px;flex:1"><span class="tos-row" style="display:flex;gap:7px"><input class="tos-name" placeholder="Competency taught" style="flex:1"><button type="button" class="tool tos-remove" title="Remove competency">X</button><input class="tos-days" type="number" min="1" step="1" placeholder="Days taught" style="width:110px"></span><button type="button" class="tool" id="tos-add" style="justify-self:start">+ Add competency</button></span>`
+    ${isTos && f === 'Competencies with teaching days' ? `<span id="wf-tos-competencies" style="display:grid;gap:8px;flex:1"><span class="tos-row" style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">${isDeped015 ? '<select class="tos-name-select" style="flex:1;min-width:200px"><option value="">— Select a competency —</option><option value="__custom__">Custom (type below)</option></select><input class="tos-name tos-name-custom" placeholder="Type or paste competency" style="flex:1;display:none"><button type="button" class="tool tos-browse" title="Browse the DepEd competency library">Browse…</button>' : '<input class="tos-name" placeholder="Competency taught" style="flex:1">'}<button type="button" class="tool tos-remove" title="Remove competency">X</button><input class="tos-days" type="number" min="1" step="1" placeholder="Days taught" style="width:110px"></span><button type="button" class="tool" id="tos-add" style="justify-self:start">+ Add competency</button></span>`
     : isTos && tosSelects[f] ? `<select id="wf-${slug(f)}" style="flex:1">${tosSelects[f].map((o) => `<option>${o}</option>`).join('')}</select>`
     : `<input id="wf-${slug(f)}" placeholder="${esc(exampleFor(f))}" ${isCompetencyField(f) && competencySuggestions.length ? 'list="competency-options"' : ''} style="flex:1">`}
     ${isCompetencyField(f) && !(isTos && f === 'Competencies with teaching days') ? `<button type="button" class="tool" data-browse="${esc(f)}" title="Browse the DepEd competency library">Browse…</button>` : ''}
@@ -524,11 +525,81 @@ function workflowView(root) {
   }));
   if (isTos) {
     const list = root.querySelector('#wf-tos-competencies');
+    const savedCodes = competencySuggestions;
+    let savedCompetencyMap = {};
+    if (isDeped015 && savedCodes.length) {
+      fetch('/api/competencies', { credentials: 'same-origin' })
+        .then((r) => r.json())
+        .then((data) => {
+          savedCompetencyMap = Object.fromEntries(data.competencies.filter((c) => savedCodes.includes(c.code)).map((c) => [c.code, c]));
+          const opts = Object.values(savedCompetencyMap).map((c) => `<option value="${esc(c.code)}">${esc(c.description)} (${esc(c.code)})</option>`).join('');
+          list.querySelectorAll('.tos-name-select').forEach((sel) => {
+            if (!sel.dataset.built) {
+              sel.innerHTML = `<option value="">— Select a competency —</option>${opts}<option value="__custom__">Custom (type below)</option>`;
+              sel.dataset.built = '1';
+            }
+          });
+        })
+        .catch(() => {});
+    }
+    function buildTosRowHtml() {
+      if (isDeped015) {
+        return `<span class="tos-row" style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">
+          <select class="tos-name-select" style="flex:1;min-width:200px"><option value="">— Select a competency —</option><option value="__custom__">Custom (type below)</option></select>
+          <input class="tos-name tos-name-custom" placeholder="Type or paste competency" style="flex:1;display:none">
+          <button type="button" class="tool tos-browse" title="Browse the DepEd competency library">Browse…</button>
+          <button type="button" class="tool tos-remove" title="Remove competency">X</button>
+          <input class="tos-days" type="number" min="1" step="1" placeholder="Days taught" style="width:110px"></span>`;
+      }
+      return `<span class="tos-row" style="display:flex;gap:7px"><input class="tos-name" placeholder="Competency taught" style="flex:1"><button type="button" class="tool tos-remove" title="Remove competency">X</button><input class="tos-days" type="number" min="1" step="1" placeholder="Days taught" style="width:110px"></span>`;
+    }
+    function wireRowEvents(row) {
+      if (isDeped015) {
+        const sel = row.querySelector('.tos-name-select');
+        const custom = row.querySelector('.tos-name-custom');
+        const browseBtn = row.querySelector('.tos-browse');
+        if (sel && custom) {
+          sel.addEventListener('change', () => { custom.style.display = sel.value === '__custom__' ? '' : 'none'; if (sel.value && sel.value !== '__custom__') custom.value = ''; });
+          custom.addEventListener('input', () => { sel.value = '__custom__'; });
+        }
+        if (browseBtn) {
+          browseBtn.addEventListener('click', () => {
+            openCompetencyPicker(({ code, description }) => {
+              if (sel && custom) {
+                if (savedCompetencyMap[code]) {
+                  sel.value = code;
+                  custom.style.display = 'none';
+                  custom.value = '';
+                } else {
+                  sel.value = '__custom__';
+                  custom.style.display = '';
+                  custom.value = `${description} (${code})`;
+                }
+              }
+            });
+          });
+        }
+      }
+    }
+    function populateRowDropdowns() {
+      if (!isDeped015 || !Object.keys(savedCompetencyMap).length) return;
+      const opts = Object.values(savedCompetencyMap).map((c) => `<option value="${esc(c.code)}">${esc(c.description)} (${esc(c.code)})</option>`).join('');
+      list.querySelectorAll('.tos-name-select').forEach((sel) => {
+        if (sel.dataset.built) return;
+        const current = sel.getAttribute('data-value') || '';
+        sel.innerHTML = `<option value="">— Select a competency —</option>${opts}<option value="__custom__">Custom (type below)</option>`;
+        if (current) sel.value = current;
+        sel.dataset.built = '1';
+      });
+    }
+    list.querySelectorAll('.tos-row').forEach(wireRowEvents);
     root.querySelector('#tos-add')?.addEventListener('click', () => {
       const row = document.createElement('span');
-      row.className = 'tos-row'; row.style.cssText = 'display:flex;gap:7px';
-      row.innerHTML = '<input class="tos-name" placeholder="Competency taught" style="flex:1"><button type="button" class="tool tos-remove" title="Remove competency">X</button><input class="tos-days" type="number" min="1" step="1" placeholder="Days taught" style="width:110px">';
-      list.insertBefore(row, root.querySelector('#tos-add'));
+      row.innerHTML = buildTosRowHtml();
+      const rowEl = row.firstElementChild;
+      wireRowEvents(rowEl);
+      list.insertBefore(rowEl, root.querySelector('#tos-add'));
+      setTimeout(populateRowDropdowns, 0);
     });
     list?.addEventListener('click', (e) => {
       if (e.target.matches('.tos-remove') && list.querySelectorAll('.tos-row').length > 1) e.target.closest('.tos-row').remove();
@@ -540,7 +611,26 @@ function workflowView(root) {
     missing.forEach((f) => (context[f] = document.getElementById(`wf-${slug(f)}`)?.value.trim()));
     optional.forEach((f) => { const val = document.getElementById(`wf-${slug(f)}`)?.value.trim(); if (val) context[f] = val; });
     if (isTos) {
-      const rows = [...root.querySelectorAll('.tos-row')].map((row) => `${row.querySelector('.tos-name')?.value.trim()} ${row.querySelector('.tos-days')?.value} days`).filter((row) => row && !row.startsWith('undefined'));
+      const rows = [...root.querySelectorAll('.tos-row')].map((row) => {
+        let compName;
+        if (isDeped015) {
+          const sel = row.querySelector('.tos-name-select');
+          const custom = row.querySelector('.tos-name-custom');
+          if (sel && sel.value && sel.value !== '__custom__') {
+            compName = sel.options[sel.selectedIndex]?.textContent || sel.value;
+          } else {
+            compName = custom?.value.trim() || '';
+          }
+        } else {
+          compName = row.querySelector('.tos-name')?.value.trim() || '';
+        }
+        return `${compName} ${row.querySelector('.tos-days')?.value} days`;
+      }).filter((row) => {
+        const daysMatch = row.match(/(\d+)\s+days$/);
+        const hasDays = daysMatch && Number(daysMatch[1]) > 0;
+        const name = row.replace(/\s+\d+\s+days$/, '').trim();
+        return hasDays && name && !name.startsWith('undefined');
+      });
       if (!rows.length) { toast('Add at least one competency and teaching-day count.'); return; }
       context['Competencies with teaching days'] = rows.join('; ');
     }
