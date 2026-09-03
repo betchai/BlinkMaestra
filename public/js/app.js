@@ -1680,7 +1680,7 @@ async function renderAdminUsersTab(body) {
 
   const statusBadge = (s) => {
     const map = {
-      active: ['Approved / active', 'background:#e3f2ec;color:#0b5e55'],
+      active: ['Approved / active', 'background:#eaf1fc;color:#0d47c7'],
       free: ['Free trial', 'background:#edf3f7;color:#164b6b'],
       limited: ['Limited — needs subscription', 'background:#fbecec;color:#a13030'],
       admin: ['Admin', 'background:#f3e9da;color:#7a5a20'],
@@ -1747,7 +1747,7 @@ async function renderAdminUsersTab(body) {
                   <tr style="border-bottom:1px solid var(--line)">
                     <td style="padding:9px 12px"><strong>${esc(s.plan)}</strong></td>
                     <td style="padding:9px 12px">PHP ${money(s.total)}</td>
-                    <td style="padding:9px 12px">${s.status === 'active' ? '<span class="tag" style="background:#e3f2ec;color:#0b5e55">Approved</span>' : s.status === 'pending' ? '<span class="tag" style="background:#fff3cd;color:#8a6d1a">Pending</span>' : '<span class="tag" style="background:#fbecec;color:#a13030">Rejected</span>'}</td>
+                    <td style="padding:9px 12px">${s.status === 'active' ? '<span class="tag" style="background:#eaf1fc;color:#0d47c7">Approved</span>' : s.status === 'pending' ? '<span class="tag" style="background:#fff3cd;color:#8a6d1a">Pending</span>' : '<span class="tag" style="background:#fbecec;color:#a13030">Rejected</span>'}</td>
                     <td style="padding:9px 12px">${esc(s.ref || '')}</td>
                     <td style="padding:9px 12px">${s.paidAt ? new Date(s.paidAt).toLocaleDateString() : '—'}</td>
                     <td style="padding:9px 12px">${s.expiresAt ? new Date(s.expiresAt).toLocaleDateString() : '—'}</td>
