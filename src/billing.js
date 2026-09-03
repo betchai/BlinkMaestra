@@ -31,12 +31,44 @@ function numEnv(name, fallback) {
 }
 
 export const PLAN = {
-  perMonth: numEnv('BILLING_PER_MONTH', 100),      // Philippine pesos per month
-  months: [1, 3, 6, 12],
+  perMonth: numEnv('BILLING_PER_MONTH', 199),      // Philippine pesos per month (Monthly plan)
+  annualTotal: numEnv('BILLING_ANNUAL', 1990),     // Philippine pesos for the full Annual plan
+  annualMonths: 12,                                 // the Annual plan grants 12 months of access
+  plans: ['monthly', 'annual'],
   currency: 'PHP',
   gcashNumber: process.env.BILLING_GCASH || '09299865338',
   freeAllowance: Math.floor(numEnv('FREE_ALLOWANCE', 5)),
+  annualEffectiveMonthly: Math.round((numEnv('BILLING_ANNUAL', 1990) / 12) * 100) / 100,
 };
+
+// Resolve the plan descriptor for a given plan id ('monthly' | 'annual').
+// Kept pure so tests can call it directly. Legacy numeric months map to a plan.
+export function resolvePlan(plan) {
+  if (plan === 'annual') {
+    return {
+      id: 'annual',
+      plan: 'annual',
+      name: 'Annual',
+      months: PLAN.annualMonths,
+      perMonth: null,                 // billed as one yearly total, not per month
+      total: PLAN.annualTotal,
+      effectiveMonthly: Math.round((PLAN.annualTotal / PLAN.annualMonths) * 100) / 100,
+      currency: PLAN.currency,
+      gcashNumber: PLAN.gcashNumber,
+    };
+  }
+  return {
+    id: 'monthly',
+    plan: 'monthly',
+    name: 'Monthly',
+    months: 1,
+    perMonth: PLAN.perMonth,
+    total: PLAN.perMonth,
+    effectiveMonthly: PLAN.perMonth,
+    currency: PLAN.currency,
+    gcashNumber: PLAN.gcashNumber,
+  };
+}
 
 // The effective on/off state. Precedence: settings.payments.enabled (UI toggle)
 // > PAYMENTS_ENABLED env (which is OFF by default so teachers can test freely).
@@ -129,24 +161,18 @@ export async function consumeAllowance(userId, allowed) {
   await save(data);
 }
 
-export function quote(months) {
-  const n = Number(months);
-  if (!Number.isInteger(n) || !PLAN.months.includes(n)) {
-    throw Object.assign(new Error('Please choose 1, 3, 6, or 12 months.'), { status: 400 });
+export function quote(plan) {
+  const id = String(plan || '').toLowerCase();
+  if (!PLAN.plans.includes(id)) {
+    throw Object.assign(new Error('Please choose the Monthly or Annual plan.'), { status: 400 });
   }
-  return {
-    months: n,
-    perMonth: PLAN.perMonth,
-    total: n * PLAN.perMonth,
-    currency: PLAN.currency,
-    gcashNumber: PLAN.gcashNumber,
-  };
+  return resolvePlan(id);
 }
 
 // Teacher orders a subscription before payment is approved. Returns an order with
 // payment instructions. Nothing is granted until an admin approves.
-export async function createOrder(userId, { months, ref, note }) {
-  const q = quote(months);
+export async function createOrder(userId, { plan, ref, note }) {
+  const q = quote(plan);
   const refClean = String(ref || '').trim();
   if (!refClean) {
     throw Object.assign(new Error('Please enter the GCash reference number for your payment.'), { status: 400 });
@@ -156,6 +182,7 @@ export async function createOrder(userId, { months, ref, note }) {
   const order = {
     id: randomUUID(),
     userId,
+    plan: q.id,
     months: q.months,
     perMonth: q.perMonth,
     total: q.total,
@@ -167,7 +194,7 @@ export async function createOrder(userId, { months, ref, note }) {
   };
   ent.subscriptions.push(order);
   data.userEntitlements[userId] = ent;
-  await audit(data, userId, 'subscription-order', { id: order.id, months: order.months, total: order.total, ref: order.refClean });
+  await audit(data, userId, 'subscription-order', { id: order.id, plan: order.plan, months: order.months, total: order.total, ref: order.ref });
   await save(data);
   return { order: { ...order, gcashNumber: PLAN.gcashNumber } };
 }
@@ -194,6 +221,72 @@ export async function listAllOrders(includeUsers = false) {
     }
   }
   return orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+// Admin: full subscription management directory, one entry per user. Each entry
+// carries their free-allowance usage, current status, and complete payment order
+// history (plan, total, reference, status, expiry) so an admin can track payments.
+function planLabel(order) {
+  if (!order || !order.status) return '';
+  if (order.plan === 'annual') return `Annual — PHP ${Number(order.total || 0).toLocaleString()}`;
+  if (order.plan === 'monthly') return `Monthly — PHP ${Number(order.total || 0).toLocaleString()}`;
+  // Legacy orders predate the plan field: infer from months.
+  const m = Number(order.months || 0);
+  return `${m} month${m !== 1 ? 's' : ''} — PHP ${Number(order.total || 0).toLocaleString()}`;
+}
+
+export async function adminSubscriptionDirectory() {
+  const data = await db();
+  const ents = data.userEntitlements || {};
+  const users = data.users || [];
+  const now = Date.now();
+  const directory = users.map((u) => {
+    const ent = ents[u.id] || { freeUsed: 0, subscriptions: [] };
+    const subs = (ent.subscriptions || []).slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const active = activeSubscription(ent);
+    const pending = subs.filter((s) => s.status === 'pending');
+    const freeUsed = ent.freeUsed || 0;
+    let status;
+    if (u.role === 'admin') status = 'admin';
+    else if (active) status = 'active';
+    else if (freeUsed < PLAN.freeAllowance) status = 'free';
+    else status = 'limited';
+    return {
+      id: u.id,
+      email: u.email,
+      name: u.name || '',
+      role: u.role || 'teacher',
+      createdAt: u.createdAt,
+      status,
+      freeUsed,
+      freeAllowance: PLAN.freeAllowance,
+      activeUntil: active ? active.expiresAt : null,
+      activePlan: active ? {
+        plan: active.plan || planLabel(active),
+        months: active.months,
+        total: active.total,
+        expiresAt: active.expiresAt,
+        paidAt: active.paidAt,
+      } : null,
+      pendingCount: pending.length,
+      subscriptions: subs.map((s) => ({
+        id: s.id,
+        plan: s.plan ? (s.plan === 'annual' ? 'Annual' : 'Monthly') : planLabel(s),
+        months: s.months,
+        total: s.total,
+        status: s.status,
+        ref: s.ref,
+        note: s.note,
+        createdAt: s.createdAt,
+        paidAt: s.paidAt || null,
+        expiresAt: s.expiresAt || null,
+        validatedBy: s.validatedBy || null,
+        rejectReason: s.rejectReason || null,
+      })),
+    };
+  });
+  directory.sort((a, b) => a.email.localeCompare(b.email));
+  return { users: directory, plan: { perMonth: PLAN.perMonth, annualTotal: PLAN.annualTotal } };
 }
 
 // Admin approves a pending order. Paid time stacks on top of any current expiry.

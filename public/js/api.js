@@ -32,10 +32,11 @@ export const api = {
   aiConfig: (includeKeys = false) => request(`/api/admin/ai-config${includeKeys ? '?includeKeys=true' : ''}`),
   saveAiConfig: (p) => request('/api/admin/ai-config', { method: 'PUT', body: p }),
 
-  billingQuote: (months) => request('/api/billing/quote', { method: 'POST', body: { months } }),
+  billingQuote: (plan) => request('/api/billing/quote', { method: 'POST', body: { plan } }),
   createOrder: (p) => request('/api/billing/orders', { method: 'POST', body: p }),
   myOrders: () => request('/api/billing/orders').then((r) => r.orders),
   adminOrders: () => request('/api/admin/billing/orders').then((r) => r.orders),
+  adminSubscriptionDirectory: () => request('/api/admin/users/subscriptions'),
   approveOrder: (id) => request(`/api/admin/billing/orders/${id}/approve`, { method: 'POST', body: {} }),
   rejectOrder: (id, reason) => request(`/api/admin/billing/orders/${id}/reject`, { method: 'POST', body: { reason } }),
   setPaymentsEnabled: (enabled) => request('/api/admin/billing/payments-toggle', { method: 'POST', body: { enabled } }),
@@ -80,6 +81,24 @@ export const api = {
     });
     if (!response.ok) {
       let message = 'We could not export the document right now.';
+      try { message = (await response.json()).error || message; } catch {}
+      throw new Error(message);
+    }
+    return response.blob();
+  },
+
+  generateLessonSlides: (id) => request(`/api/lessons/${id}/slides`, { method: 'POST', body: {} }),
+  lessonSlides: (id) => request(`/api/lessons/${id}/slides`),
+
+  downloadLessonSlides: async (id) => {
+    const response = await fetch(`/api/lessons/${id}/slides/download`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) {
+      let message = 'We could not download the slide deck.';
       try { message = (await response.json()).error || message; } catch {}
       throw new Error(message);
     }

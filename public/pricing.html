@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b5e55" />
+    <title>Pricing — BLinkMaestra</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet" />
+    <style>
+      :root{--ink:#17332e;--muted:#57736c;--paper:#f6faf8;--line:#dce7e2;--forest:#0b5e55;--forest-2:#0a4c45;--mint:#edf7f3;--gold:#f7c95c;--white:#fff}
+      *{box-sizing:border-box}
+      body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.6 "DM Sans",system-ui,sans-serif}
+      a{color:inherit}
+      header{display:flex;justify-content:space-between;align-items:center;padding:18px clamp(20px,4vw,48px);border-bottom:1px solid var(--line);background:var(--white)}
+      .brand{display:flex;gap:11px;align-items:center;font-weight:700;text-decoration:none}
+      .brand-logo{height:40px;width:auto;border-radius:10px;object-fit:contain}
+      nav a{text-decoration:none;margin-left:22px;color:var(--ink);font-weight:600;font-size:14px}
+      nav a.cta{background:var(--forest);color:#fff;padding:10px 18px;border-radius:9px}
+      nav a.cta:hover{background:var(--forest-2)}
+      .wrap{max-width:1080px;margin:auto;padding:60px clamp(20px,4vw,48px) 70px}
+      .pricing-head{text-align:center;max-width:660px;margin:0 auto 44px}
+      .pricing-head .eyebrow{color:var(--forest);text-transform:uppercase;letter-spacing:1.4px;font-weight:700;font-size:12px}
+      .pricing-head h1{font:700 clamp(32px,5vw,46px)/1.1 Fraunces,serif;letter-spacing:-1px;margin:12px 0}
+      .pricing-head p{color:var(--muted);font-size:17px;margin:0}
+      .plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:22px;align-items:stretch}
+      .plan{background:var(--white);border:1px solid var(--line);border-radius:18px;padding:30px;display:flex;flex-direction:column;box-shadow:0 12px 34px rgba(10,63,56,.05)}
+      .plan.featured{border:2px solid var(--forest);box-shadow:0 22px 55px rgba(11,94,85,.18);position:relative}
+      .plan .badge{position:absolute;top:-13px;left:50%;transform:translateX(-50%);background:var(--gold);color:#093e38;font-size:12px;font-weight:700;padding:5px 14px;border-radius:99px;letter-spacing:.4px}
+      .plan h2{font-family:Fraunces,serif;font-size:22px;margin:0}
+      .plan .sub{color:var(--muted);font-size:13px;margin:4px 0 20px}
+      .price{display:flex;align-items:baseline;gap:6px;margin-bottom:22px}
+      .price .amount{font:700 46px Fraunces,serif;color:var(--forest)}
+      .price .per{color:var(--muted);font-size:14px}
+      .plan ul{list-style:none;padding:0;margin:0 0 26px;flex:1}
+      .plan li{display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-top:1px solid #f0f5f2}
+      .plan li:first-child{border-top:none}
+      .plan li .tick{color:var(--forest);font-weight:700;flex:none}
+      .plan li small{display:block;color:var(--muted);font-size:12px}
+      .effective{color:var(--muted);font-size:13px;margin:-12px 0 24px}
+      .effective strong{color:var(--forest)}
+      .btn.secondary{border:1.5px solid var(--line);color:var(--forest);background:#fff}
+      .included{max-width:720px;margin:54px auto 0;background:var(--white);border:1px solid var(--line);border-radius:18px;padding:30px;box-shadow:0 12px 34px rgba(10,63,56,.05)}
+      .included h2{font-family:Fraunces,serif;font-size:22px;margin:0 0 6px;text-align:center}
+      .included>ul{list-style:none;padding:0;margin:18px 0 0}
+      .included li{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid #f0f5f2}
+      .included li:first-child{border-top:none}
+      .included li .tick{color:var(--forest);font-weight:700;flex:none}
+      .included li small{display:block;color:var(--muted);font-size:12px}
+      .compare{margin:20px auto 0;max-width:720px;border-collapse:collapse;width:100%}
+      .compare th,.compare td{text-align:left;padding:10px 14px;border:1px solid var(--line);font-size:14px}
+      .compare th{background:var(--mint);color:var(--forest)}
+      .compare td:last-child,.compare th:last-child{text-align:right;font-weight:600}
+      .btn{display:inline-block;text-decoration:none;text-align:center;border-radius:10px;padding:13px 18px;font-weight:700;font-size:15px}
+      .btn.primary{background:var(--forest);color:#fff;box-shadow:0 6px 16px rgba(11,94,85,.25)}
+      .btn.primary:hover{background:var(--forest-2)}
+      .note{text-align:center;color:var(--muted);font-size:13px;margin-top:26px}
+      .fb{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:46px;padding:18px;border:1px solid var(--line);border-radius:16px;background:var(--mint);color:var(--forest);font-weight:600;text-decoration:none}
+      .fb:hover{background:#e3f2ec}
+      footer{padding:34px;text-align:center;color:var(--muted);font-size:13px;border-top:1px solid var(--line)}
+    </style>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/"><img class="brand-logo" src="/logo.png" alt="BLinkMaestra" /><span><b>BLinkMaestra</b><small>DepEd Teacher Copilot</small></span></a>
+      <nav>
+        <a href="/#features">Features</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/app">Sign in</a>
+        <a class="cta" href="/app#register">Get started</a>
+      </nav>
+    </header>
+
+    <main class="wrap">
+      <div class="pricing-head">
+        <p class="eyebrow">Simple, teacher-friendly pricing</p>
+        <h1>A small investment that buys back your evenings.</h1>
+        <p>Try it free — every new account gets <strong>5 free documents</strong> before you decide to subscribe. When you're ready, choose Monthly or Annual. Everything included, no add-ons, no surprises.</p>
+      </div>
+
+      <div class="plans">
+        <div class="plan">
+          <h2>Monthly</h2>
+          <p class="sub">Pay as you go, cancel anytime</p>
+          <div class="price">
+            <span class="amount">₱199</span>
+            <span class="per">/ month</span>
+          </div>
+          <p class="effective">Effective monthly cost: <strong>₱199</strong></p>
+          <a class="btn secondary" href="/app#register">Choose Monthly</a>
+        </div>
+        <div class="plan featured">
+          <span class="badge">Best value · save ₱398</span>
+          <h2>Annual</h2>
+          <p class="sub">Two months free when you go yearly</p>
+          <div class="price">
+            <span class="amount">₱1,990</span>
+            <span class="per">/ year</span>
+          </div>
+          <p class="effective">Effective monthly cost: <strong>₱165.83/month</strong></p>
+          <a class="btn primary" href="/app#register">Choose Annual</a>
+        </div>
+      </div>
+
+      <table class="compare">
+        <thead>
+          <tr><th>Plan</th><th></th><th>Price</th><th>Effective monthly</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Monthly</strong></td><td></td><td>₱199/month</td><td>₱199</td></tr>
+          <tr><td><strong>Annual</strong></td><td>Best value</td><td>₱1,990/year</td><td>₱165.83/month</td></tr>
+        </tbody>
+      </table>
+
+      <div class="included">
+        <h2>Every plan includes</h2>
+        <ul>
+          <li><span class="tick">✓</span><span>Unlimited lesson plans (DLL/DLP)<small>Generated in minutes, always DepEd-aligned.</small></span></li>
+          <li><span class="tick">✓</span><span>Quizzes &amp; assessments with answer keys<small>Auto-generated questions, scoring keys, and print-ready output.</small></span></li>
+          <li><span class="tick">✓</span><span>Parent letters &amp; announcements<small>Warm, professional communication drafted for you.</small></span></li>
+          <li><span class="tick">✓</span><span>MOV narratives &amp; reflection logs<small>Your teaching evidence, written and organized.</small></span></li>
+          <li><span class="tick">✓</span><span>Learns your profile<small>Remembers your grade level and subjects so you never re-enter them.</small></span></li>
+          <li><span class="tick">✓</span><span>Edit, save &amp; export<small>Every draft is yours to refine and export any time.</small></span></li>
+          <li><span class="tick">✓</span><span>Priority support<small>Fast, friendly help whenever you need it.</small></span></li>
+        </ul>
+      </div>
+
+      <p class="note">Got questions or want a demo before subscribing? Reach BLink Services on Facebook — we're happy to help.</p>
+
+      <a class="fb" href="https://www.facebook.com/profile.php?id=61582668640980" target="_blank" rel="noopener">👍 BLink Services on Facebook</a>
+    </main>
+
+    <footer>
+      <p>BLinkMaestra · Powered by BLink Services · DepEd Teacher Copilot</p>
+    </footer>
+  </body>
+</html>

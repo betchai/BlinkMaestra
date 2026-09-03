@@ -15,6 +15,10 @@ function mime(file) {
   if (file.endsWith('.css')) return 'text/css';
   if (file.endsWith('.html')) return 'text/html';
   if (file.endsWith('.svg')) return 'image/svg+xml';
+  if (file.endsWith('.png')) return 'image/png';
+  if (file.endsWith('.jpg') || file.endsWith('.jpeg')) return 'image/jpeg';
+  if (file.endsWith('.webp')) return 'image/webp';
+  if (file.endsWith('.ico')) return 'image/x-icon';
   return 'application/octet-stream';
 }
 
@@ -25,7 +29,7 @@ const server = http.createServer(async (req, res) => {
       return await handleApi(req, res, url.pathname);
     }
     // Static files with traversal protection. Landing page is the homepage; app lives at /app.
-    const routes = { '/': '/landing.html', '/app': '/index.html', '/app/': '/index.html' };
+    const routes = { '/': '/landing.html', '/pricing': '/pricing.html', '/app': '/index.html', '/app/': '/index.html' };
     const requested = routes[url.pathname] || url.pathname;
     const file = path.resolve(publicDir, '.' + requested);
     if (!file.startsWith(publicDir) || !existsSync(file)) return send(res, 404, { error: 'Not found' });

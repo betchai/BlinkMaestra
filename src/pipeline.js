@@ -151,6 +151,114 @@ export async function runGeneration({ capability, requestedCapability, context =
   return result;
 }
 
+const SLIDE_STAGES = [
+  'Extracting the topics from your lesson plan',
+  'Preparing relevant information',
+  'Drafting slide content',
+  'Structuring the presentation',
+  'Finalizing your slide deck',
+];
+
+export function slideStages() {
+  return SLIDE_STAGES;
+}
+
+// Generates an AI-authored slide deck built from the topics in a saved lesson plan.
+// The model returns structured deck JSON ({ title, subject, slides }) which the
+// server later renders into a downloadable .pptx. The teacher can edit the slides
+// in PowerPoint afterward.
+export async function runSlideDeckGeneration({ document, profile = {}, knowledgeStore = [], settings = {}, onStage = () => {} }) {
+  onStage(SLIDE_STAGES[0]);
+  // Surface the lesson's topics. Prefer the competency/objectives/lesson from the
+  // saved context; fall back to scanning the document headings for stable sections.
+  const ctx = document.context || {};
+  const topics = [
+    ctx['Competency'] || ctx['Learning competencies'] || ctx['Topic / Lesson'] || '',
+    ctx['Subject / learning area'] || ctx['Subject'] || ctx.subject || '',
+    ctx['Grade level'] || '',
+    ctx['Term'] || ctx['Week'] || ctx['Quarter'] || '',
+  ].filter(Boolean).join(' · ') || document.title;
+  // Surface the stated objectives so the deck is designed around learning outcomes,
+  // not transcribed from the plan's body text.
+  const objectives = [
+    ctx['Learning objectives'] || ctx['Objectives'] || ctx['Intended Learning Outcomes'] || '',
+    Object.entries(ctx)
+      .filter(([k]) => /object|intend|outcome|aim|competency/i.test(k))
+      .map(([, v]) => v).join(' · '),
+  ].filter(Boolean).join(' · ') || '';
+
+  onStage(SLIDE_STAGES[1]);
+  const refs = knowledgeFor('Lesson Planning', knowledgeStore);
+  const provider = getProvider(settings);
+
+  onStage(SLIDE_STAGES[2]);
+  const instructions = `You are BLinkMaestra, the DepEd teacher's copilot. Your job is NOT to copy the lesson plan onto slides. Instead, read the plan, extract its learning objectives and topics, and DESIGN a real teaching deck that prepares the teacher to present and discuss the lesson in class.
+
+Think like an experienced teacher building a presentation to lead the lesson:
+- Open by framing the lesson: what the class will learn and why it matters (hook + objective).
+- Work through each topic/objective as its own slide or pair of slides, following the plan's teaching sequence (e.g. ILAW: Intentions -> Learning Experience/Activity -> Assessing Learning -> Ways Forward when the plan uses it).
+- For each topic, include: a simple explanation the teacher can say aloud, one concrete example, and a question, activity, or check-for-understanding prompt.
+- Where the plan names an activity or assessment (quiz, exit ticket, group task), give it a dedicated slide with step-by-step instructions for running it.
+- End with a recap of key takeaways and a "what's next" / homework / prep-for-quiz slide.
+
+Scale the slide count to the plan: roughly one slide per stated objective plus opening, activity/assessment, and closing slides. For a typical lesson that lands around 6-12 slides; go longer only if the plan genuinely has many distinct objectives or activities.
+
+Every slide must carry a "notes" field with speaker notes for the teacher: what to say and at least one discussion question to pose to the class.
+
+Keep bullets short, concrete, and grade-appropriate. Return valid JSON only, exactly this shape:
+{
+  "title": "<short lesson title>",
+  "subject": "<learning area/subject>",
+  "slides": [
+    { "heading": "<slide title>", "bullets": ["<short bullet>", ...], "notes": "<speaker notes + a discussion question>" },
+    ...
+  ]
+}
+Keep slides to 3-6 short bullets each. No markdown, no HTML.`;
+
+  const input = `Lesson plan title: ${document.title}
+Lesson context: ${JSON.stringify({
+    gradeLevels: ctx['Grade level'] || profile?.gradeLevels,
+    subjects: ctx['Subject / learning area'] || ctx['Subject'] || profile?.subjects,
+    duration: ctx['Class duration'] || profile?.duration,
+    language: profile?.language,
+  })}
+Stated learning objectives: ${objectives || '(not explicitly listed — infer from the lesson content)'}
+Lesson plan content:
+---
+${String(document.contentHtml || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 12000)}
+---
+Use these knowledge notes as design constraints; never fabricate DepEd policies: ${JSON.stringify(refs.map((r) => ({ title: r.title, type: r.type, text: r.text })))}`;
+
+  const { raw, usage } = await provider.generate({ instructions, input });
+  let parsed;
+  try { parsed = extractJson(raw); } catch {
+    console.error('[slides] model returned invalid JSON:', { length: String(raw).length, tail: String(raw).slice(-160) });
+    throw Object.assign(new Error('We could not structure the slide deck. Please try again.'), { status: 502 });
+  }
+  onStage(SLIDE_STAGES[3]);
+
+  // Normalize/validate the deck shape so the renderer always has what it needs.
+  const slides = (Array.isArray(parsed.slides) ? parsed.slides : [])
+    .filter((s) => s && String(s.heading || '').trim())
+    .map((s) => ({
+      heading: String(s.heading).trim(),
+      bullets: (Array.isArray(s.bullets) ? s.bullets : []).map((b) => String(b).replace(/<[^>]+>/g, '').trim()).filter(Boolean),
+      notes: String(s.notes || '').trim(),
+    }));
+  if (!slides.length) {
+    throw Object.assign(new Error('The slide deck came back empty. Please try again.'), { status: 502 });
+  }
+
+  onStage(SLIDE_STAGES[4]);
+  return {
+    title: String(parsed.title || document.title).replace(/<[^>]+>/g, '').trim() || document.title,
+    subject: String(parsed.subject || topics).replace(/<[^>]+>/g, '').trim(),
+    slides,
+    usage,
+  };
+}
+
 function stripCognitiveLabels(html) {
   return html
     .replace(/\s*\(\s*(Remembering|Understanding|Applying|Analyzing|Evaluating|Creating)\s*\)/gi, '')

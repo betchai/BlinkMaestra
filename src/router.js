@@ -3,12 +3,17 @@ import * as auth from './auth.js';
 import * as docs from './documents.js';
 import * as billing from './billing.js';
 import { report as computeReport, activity as getActivity } from './reports.js';
-import { runGeneration, pipelineStages } from './pipeline.js';
+import { runGeneration, pipelineStages, runSlideDeckGeneration } from './pipeline.js';
 import { listTemplates, CAPABILITIES, routeCapability, relatedCapabilities } from './capabilities.js';
 import { knowledgeFor, CATEGORIES } from './knowledge.js';
 import { searchCompetencies, COMPETENCY_SOURCE } from './curriculum.js';
-import { toDocx, toPdf } from './export.js';
+import { toDocx, toPdf, toPptx, renderDeckPptx } from './export.js';
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const LOGO_PATH = path.join(ROOT, 'public', 'logo.png');
 
 export function send(res, status, payload, headers = {}) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers });
@@ -392,7 +397,7 @@ export async function handleApi(req, res, pathname) {
   // ---------- Billing / subscriptions ----------
   if (pathname === '/api/billing/quote' && method === 'POST') {
     const id = await requireUser(req, res); if (!id) return;
-    return send(res, 200, billing.quote((await body(req)).months));
+    return send(res, 200, billing.quote((await body(req)).plan));
   }
 
   if (pathname === '/api/billing/orders' && method === 'POST') {
@@ -434,6 +439,14 @@ export async function handleApi(req, res, pathname) {
     if (!requireAdmin(user, res)) return;
     const p = await body(req);
     return send(res, 200, await billing.setPaymentsEnabled(!!p.enabled));
+  }
+
+  if (pathname === '/api/admin/users/subscriptions' && method === 'GET') {
+    const id = await requireUser(req, res); if (!id) return;
+    const data = await db();
+    const user = data.users.find((u) => u.id === id);
+    if (!requireAdmin(user, res)) return;
+    return send(res, 200, await billing.adminSubscriptionDirectory());
   }
 
   // ---------- Documents ----------
@@ -513,6 +526,13 @@ export async function handleApi(req, res, pathname) {
       if (format === 'docx') {
         const buf = await toDocx(d.title, d.contentHtml);
         res.writeHead(200, { 'content-type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'content-disposition': `attachment; filename="${safeName(d.title)}.docx"` });
+        return res.end(buf);
+      }
+      if (format === 'pptx') {
+        // Slide decks are only produced for lesson-plan documents.
+        if (d.capability !== 'Lesson Planning') return send(res, 400, { error: 'PowerPoint export is only available for lesson plan documents.' });
+        const buf = await toPptx(d.title, d.contentHtml, { subject: (d.context || {}).subject, kicker: 'Lesson Plan' });
+        res.writeHead(200, { 'content-type': 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'content-disposition': `attachment; filename="${safeName(d.title)}.pptx"` });
         return res.end(buf);
       }
       return send(res, 400, { error: 'Unsupported export format.' });
@@ -627,6 +647,74 @@ export async function handleApi(req, res, pathname) {
     return send(res, 200, { next: relatedCapabilities(p.capability) });
   }
 
+  // ---------- Lesson-plan slide decks (AI-generated) ----------
+  const slidesMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/slides(?:\/([^/]+))?$/);
+  if (slidesMatch) {
+    const docId = slidesMatch[1];
+    const action = slidesMatch[2] || '';
+    const id = await requireAccess(req, res); if (!id) return;
+    const data = await db();
+
+    let d;
+    try { d = await docs.getDocument(id, docId); }
+    catch { return send(res, 404, { error: 'That document was not found.' }); }
+    if (d.capability !== 'Lesson Planning') {
+      return send(res, 400, { error: 'Slide decks are only available for lesson plan documents.' });
+    }
+
+    if (action === '' && method === 'POST') {
+      const active = slideJobs.get(docId);
+      if (active && (active.status === 'queued' || active.status === 'running' || active.status === 'pending')) {
+        return send(res, 409, { error: 'A slide deck is already being generated for this lesson plan.', jobId: active.id });
+      }
+      const user = data.users.find((u) => u.id === id);
+      const profile = data.profiles.find((x) => x.userId === id) || {};
+      const job = { id: randomUUID(), userId: id, status: 'queued', stage: 'queued', startedAt: Date.now(), result: null, error: null };
+      slideJobs.set(docId, job);
+      runSlideDeckGeneration({
+        document: d,
+        profile,
+        knowledgeStore: data.knowledge,
+        settings: data.settings,
+        onStage: (stage) => { job.stage = stage; job.status = 'running'; },
+      }).then(async (deck) => {
+        job.status = 'done';
+        job.result = deck;
+        slideDecks.set(docId, deck);
+        const freshData = await db();
+        freshData.aiRequests.push({ id: randomUUID(), userId: id, capability: 'Slide deck', documentId: docId, title: deck.title || '', createdAt: new Date().toISOString(), usage: deck.usage ? { input_tokens: deck.usage.input_tokens, output_tokens: deck.usage.output_tokens } : null });
+        await save(freshData);
+      }).catch((error) => {
+        console.error('[slides job]', error.message);
+        job.status = 'failed';
+        job.error = error.message || 'We could not generate the slide deck. Please try again.';
+      });
+      return send(res, 202, { jobId: job.id });
+    }
+
+    if (action === '' && method === 'GET') {
+      const job = slideJobs.get(docId);
+      if (!job) return send(res, 200, { exists: !!slideDecks.get(docId) });
+      return send(res, 200, {
+        status: job.status,
+        stage: job.stage,
+        elapsedSeconds: Math.round((Date.now() - job.startedAt) / 1000),
+        result: job.status === 'done' ? job.result : undefined,
+        error: job.status === 'failed' ? job.error : undefined,
+      });
+    }
+
+    if (action === 'download' && method === 'POST') {
+      const deck = slideDecks.get(docId);
+      if (!deck) return send(res, 409, { error: 'Generate the slide deck first, then download it.' });
+      const buf = await renderDeckPptx(deck, LOGO_PATH);
+      res.writeHead(200, { 'content-type': 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'content-disposition': `attachment; filename="${safeName(deck.title || d.title)}-slides.pptx"` });
+      return res.end(buf);
+    }
+
+    return send(res, 404, { error: 'Not found' });
+  }
+
   return send(res, 404, { error: 'Not found' });
 }
 
@@ -661,6 +749,12 @@ function parseCompetencyImport(text) {
 
 // In-memory generation jobs (live progress; results are short-lived until the client saves them).
 const generationJobs = new Map();
+
+// Latest generated slide deck per document id (so the PPTX can be re-rendered on download).
+const slideDecks = new Map();
+
+// In-progress slide-deck generation job per document id.
+const slideJobs = new Map();
 
 function safeName(title) {
   return title.replace(/[^a-z0-9-_ ]/gi, '').trim().replace(/\s+/g, '-') || 'document';

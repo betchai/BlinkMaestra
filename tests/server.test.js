@@ -165,6 +165,57 @@ test('export produces real DOCX and PDF files', async () => {
   assert.equal(head, '%PDF');
 });
 
+test('lesson-plan documents export as a real PPTX; other documents are refused', async () => {
+  const { cookie } = await registerUser('pptx');
+  const lesson = (await api('/api/documents', { method: 'POST', cookie, body: { title: 'LP Sample', capability: 'Lesson Planning', contentHtml: '<h1>LP Sample</h1><h2>Objectives</h2><ul><li>Define</li><li>Explain</li></ul>' } })).data.document;
+  const pptx = await api(`/api/documents/${lesson.id}/export`, { method: 'POST', cookie, body: { format: 'pptx' } });
+  assert.equal(pptx.status, 200);
+  assert.deepEqual([...new Uint8Array(pptx.data).slice(0, 2)], [0x50, 0x4b]); // ZIP magic → valid OOXML container
+
+  const other = (await api('/api/documents', { method: 'POST', cookie, body: { title: 'Report', capability: 'School Documentation', contentHtml: '<h1>Report</h1>' } })).data.document;
+  const refused = await api(`/api/documents/${other.id}/export`, { method: 'POST', cookie, body: { format: 'pptx' } });
+  assert.equal(refused.status, 400);
+});
+
+test('lesson-plan AI slide deck: wiring + job lifecycle; downloads PPTX when generation succeeds', async () => {
+  const { cookie } = await registerUser('slides');
+  const lesson = (await api('/api/documents', { method: 'POST', cookie, body: { title: 'LP Slides', capability: 'Lesson Planning', contentHtml: '<h1>LP Slides</h1><h2>Objectives</h2><ul><li>Define</li><li>Explain</li></ul>' } })).data.document;
+
+  // Non-lesson-plan documents are refused.
+  const other = (await api('/api/documents', { method: 'POST', cookie, body: { title: 'Report', capability: 'School Documentation', contentHtml: '<h1>Report</h1>' } })).data.document;
+  const refused = await api(`/api/lessons/${other.id}/slides`, { method: 'POST', cookie, body: {} });
+  assert.equal(refused.status, 400);
+
+  // Start generation → 202 + jobId (streams stages server-side).
+  const started = await api(`/api/lessons/${lesson.id}/slides`, { method: 'POST', cookie, body: {} });
+  assert.equal(started.status, 202);
+  assert.ok(started.data.jobId);
+
+  // Poll to a terminal state.
+  let state;
+  const deadline = Date.now() + 60000;
+  do {
+    await new Promise((r) => setTimeout(r, 2000));
+    state = (await api(`/api/lessons/${lesson.id}/slides`, { cookie })).data;
+  } while ((state.status === 'queued' || state.status === 'running') && Date.now() < deadline);
+
+  // The endpoints are wired and reach a valid terminal state in every environment.
+  assert.ok(state.status === 'done' || state.status === 'failed');
+
+  // Without a configured AI provider the job fails cleanly (never a server crash).
+  if (state.status === 'failed') {
+    assert.ok(typeof state.error === 'string' && state.error.length > 0);
+    return;
+  }
+
+  // Generation succeeded: the deck is structured and the PPTX downloads as OOXML.
+  assert.ok(Array.isArray(state.result.slides) && state.result.slides.length > 0);
+  const dl = await api(`/api/lessons/${lesson.id}/slides/download`, { method: 'POST', cookie, body: {} });
+  assert.equal(dl.status, 200);
+  assert.equal(dl.headers.get('content-type'), 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+  assert.deepEqual([...new Uint8Array(dl.data).slice(0, 2)], [0x50, 0x4b]); // ZIP magic → valid OOXML container
+});
+
 // ---------- Chaining ----------
 test('workflow chaining recommendations are returned', async () => {
   const { cookie } = await registerUser('chain');
@@ -321,10 +372,12 @@ test('free trial: 5 generations then limited; order + admin approval grants acce
   assert.equal(blocked.data.code, 'subscription_required');
 
   // Teacher orders a subscription; admin approves; access restored and stacked.
-  const quote = await api('/api/billing/quote', { method: 'POST', cookie, body: { months: 3 } });
-  assert.equal(quote.data.total, 300);
-  const order = await api('/api/billing/orders', { method: 'POST', cookie, body: { months: 3, ref: 'GC-12345', note: 'hello' } });
+  const quote = await api('/api/billing/quote', { method: 'POST', cookie, body: { plan: 'monthly' } });
+  assert.equal(quote.data.total, 199);
+  assert.equal(quote.data.plan, 'monthly');
+  const order = await api('/api/billing/orders', { method: 'POST', cookie, body: { plan: 'monthly', ref: 'GC-12345', note: 'hello' } });
   assert.equal(order.status, 201);
+  assert.equal(order.data.order.plan, 'monthly');
   const orderId = order.data.order.id;
 
   const allOrders = await api('/api/admin/billing/orders', { cookie: adminCookie });
@@ -338,13 +391,47 @@ test('free trial: 5 generations then limited; order + admin approval grants acce
   assert.equal((await api('/api/documents', { cookie })).status, 200);
 
   // Renewal stacks onto the existing expiry.
-  const order2 = await api('/api/billing/orders', { method: 'POST', cookie, body: { months: 12, ref: 'GC-67890' } });
+  const annualQuote = await api('/api/billing/quote', { method: 'POST', cookie, body: { plan: 'annual' } });
+  assert.equal(annualQuote.data.total, 1990);
+  const order2 = await api('/api/billing/orders', { method: 'POST', cookie, body: { plan: 'annual', ref: 'GC-67890' } });
+  assert.equal(order2.data.order.plan, 'annual');
+  assert.equal(order2.data.order.months, 12);
   await api(`/api/admin/billing/orders/${order2.data.order.id}/approve`, { method: 'POST', cookie: adminCookie, body: {} });
   const renewed = await api('/api/me', { cookie });
   assert.equal(renewed.data.entitlement.subscription.months, 12);
 
   // Turn payments back off so the rest of the world is un-gated again.
   await api('/api/admin/billing/payments-toggle', { method: 'POST', cookie: adminCookie, body: { enabled: false } });
+});
+
+test('admin subscription directory lists every user with plan and free-allowance details', async () => {
+  const adminCookie = await adminLogin();
+  const teacher = await registerUser('dir-teacher');
+
+  // Teacher places a pending monthly order so the directory exposes the plan flag.
+  const order = await api('/api/billing/orders', { method: 'POST', cookie: teacher.cookie, body: { plan: 'annual', ref: 'GC-DIR-1' } });
+  assert.equal(order.status, 201);
+  assert.equal(order.data.order.plan, 'annual');
+
+  const dir = await api('/api/admin/users/subscriptions', { cookie: adminCookie });
+  assert.equal(dir.status, 200);
+  assert.ok(Array.isArray(dir.data.users));
+  const entry = dir.data.users.find((u) => u.id === teacher.userId);
+  assert.ok(entry, 'teacher should appear in the directory');
+  assert.equal(entry.freeAllowance, 5);
+  assert.equal(entry.freeUsed, 0);
+  assert.equal(entry.status, 'free');
+  assert.equal(entry.pendingCount, 1);
+  assert.equal(entry.subscriptions.length, 1);
+  assert.equal(entry.subscriptions[0].status, 'pending');
+  assert.equal(entry.subscriptions[0].plan, 'Annual');
+  assert.equal(entry.subscriptions[0].total, 1990);
+  assert.equal(dir.data.plan.perMonth, 199);
+  assert.equal(dir.data.plan.annualTotal, 1990);
+
+  // Non-admins are denied.
+  const denied = await api('/api/admin/users/subscriptions', { cookie: teacher.cookie });
+  assert.equal(denied.status, 403);
 });
 
 // ---------- First-time password setup ----------
@@ -465,7 +552,7 @@ test('approving a payment notifies the teacher by email (logged when SMTP is uns
 
   // Create a teacher and a pending order.
   const { cookie } = await registerUser('email-notify');
-  const order = await api('/api/billing/orders', { method: 'POST', cookie, body: { months: 6, ref: 'GC-NOTIFY-1' } });
+  const order = await api('/api/billing/orders', { method: 'POST', cookie, body: { plan: 'monthly', ref: 'GC-NOTIFY-1' } });
   assert.equal(order.status, 201);
 
   const approve = await api(`/api/admin/billing/orders/${order.data.order.id}/approve`, { method: 'POST', cookie: adminCookie, body: {} });

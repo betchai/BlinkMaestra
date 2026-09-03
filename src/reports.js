@@ -72,9 +72,18 @@ export async function report() {
   const pendingOrders = allOrders.filter((o) => o.status === 'pending');
   const rejectedOrders = allOrders.filter((o) => o.status === 'rejected');
 
-  // "Paid, all-time": every approved order, grouped by plan length.
-  const paidByTier = groupBy(paidOrders, (o) => o.months).map((g) => ({ months: Number(g.key), count: g.count }));
-  paidByTier.sort((a, b) => a.months - b.months);
+  // Human-readable plan label for a subscription order. New orders carry a `plan`
+  // field ('monthly' | 'annual'); legacy orders fall back to their month count.
+  const planName = (o) => {
+    if (o.plan === 'annual') return 'Annual';
+    if (o.plan === 'monthly') return 'Monthly';
+    const m = Number(o.months || 0);
+    return m > 0 ? `${m}-month` : 'Subscription';
+  };
+
+  // "Paid, all-time": every approved order, grouped by plan.
+  const paidByTier = groupBy(paidOrders, planName).map((g) => ({ plan: g.key, count: g.count }));
+  paidByTier.sort((a, b) => (a.plan === 'Monthly' ? -1 : a.plan === 'Annual' ? 0 : 1) - (b.plan === 'Monthly' ? -1 : b.plan === 'Annual' ? 0 : 1));
   const allTimeRevenue = paidOrders.reduce((sum, o) => sum + (o.total || 0), 0);
 
   // Currently active subscriptions: users with at least one unexpired active order.
@@ -83,9 +92,9 @@ export async function report() {
     if (o.expiresAt && new Date(o.expiresAt).getTime() > now) activeNow.add(o._uid);
   }
   const activeOrdersNow = paidOrders.filter((o) => activeNow.has(o._uid));
-  const activeByTier = groupBy(activeOrdersNow, (o) => o.months)
-    .map((g) => ({ months: Number(g.key), count: g.count }))
-    .sort((a, b) => a.months - b.months);
+  const activeByTier = groupBy(activeOrdersNow, planName)
+    .map((g) => ({ plan: g.key, count: g.count }))
+    .sort((a, b) => (a.plan === 'Monthly' ? -1 : a.plan === 'Annual' ? 0 : 1) - (b.plan === 'Monthly' ? -1 : b.plan === 'Annual' ? 0 : 1));
 
   // ---- Teacher tier breakdown (only meaningful when payments are enabled) ----
   const paymentsEnabled = await paymentsEnabledAsync();
@@ -158,7 +167,7 @@ export async function report() {
     } else {
       const active = activeSubscription(ent);
       if (active) {
-        tierName = `${active.months}-month Subscription`;
+        tierName = planName(active) + ' Subscription';
       } else if ((ent.freeUsed || 0) >= PLAN.freeAllowance) {
         tierName = 'Limited (Free allowance used)';
       } else {
@@ -182,7 +191,7 @@ export async function report() {
   return {
     generatedAt: new Date().toISOString(),
     paymentsEnabled,
-    plan: { perMonth: PLAN.perMonth, freeAllowance: PLAN.freeAllowance, currency: PLAN.currency },
+    plan: { perMonth: PLAN.perMonth, annualTotal: PLAN.annualTotal, annualMonths: PLAN.annualMonths, freeAllowance: PLAN.freeAllowance, currency: PLAN.currency },
     users: { total: users.length, teachers: teachers.length, admins: admins.length },
     userList,
     subscribers: {

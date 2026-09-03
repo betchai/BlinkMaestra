@@ -43,7 +43,7 @@ function authScreen(mode = 'login', prefillToken = '') {
   app.innerHTML = '';
   const page = h(`<div class="auth-page page" style="display:grid;place-items:center;min-height:100vh">
     <div class="card auth-card" style="width:min(430px,100%);padding:30px">
-      <div class="brand" style="margin-bottom:18px;color:var(--forest)"><span class="brand-mark">B</span><div><strong style="color:var(--ink)">BLinkMaestra</strong><small>Your teaching copilot</small></div></div>
+      <a class="brand" href="/" style="margin-bottom:18px;color:var(--forest);text-decoration:none"><img class="brand-logo" src="/logo.png" alt="BLinkMaestra" /><div><strong style="color:var(--ink)">BLinkMaestra</strong><small>Your teaching copilot</small></div></a>
       <h1 style="font:700 24px Fraunces,serif;margin:0 0 16px">${title}</h1>
       <form id="auth-form">${formHtml}</form>
     </div></div>`);
@@ -94,7 +94,7 @@ function passwordSetupScreen(user) {
   const email = user?.email || '';
   const page = h(`<div class="auth-page page" style="display:grid;place-items:center;min-height:100vh">
     <div class="card auth-card" style="width:min(430px,100%);padding:30px">
-      <div class="brand" style="margin-bottom:18px;color:var(--forest)"><span class="brand-mark">B</span><div><strong style="color:var(--ink)">BLinkMaestra</strong><small>Your teaching copilot</small></div></div>
+      <a class="brand" href="/" style="margin-bottom:18px;color:var(--forest);text-decoration:none"><img class="brand-logo" src="/logo.png" alt="BLinkMaestra" /><div><strong style="color:var(--ink)">BLinkMaestra</strong><small>Your teaching copilot</small></div></a>
       <h1 style="font:700 24px Fraunces,serif;margin:0 0 8px">Set your password</h1>
       <p class="card-copy" style="margin:0 0 16px">Welcome${email ? ' ' + esc(email) : ''}! This is your first sign-in. Create a password — you'll use your email and this password on every future visit.</p>
       <form id="pw-setup-form">
@@ -213,10 +213,10 @@ function shell(contentHtml, crumb) {
   app.innerHTML = '';
   app.appendChild(h(`<div class="app-shell">
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark">B</span><div><strong>BLinkMaestra</strong><small>Teacher workspace</small></div></div>
+      <a class="brand" href="/" title="BLinkMaestra home" style="text-decoration:none;color:inherit"><img class="brand-logo" src="/logo.png" alt="BLinkMaestra" /><div><strong>BLinkMaestra</strong><small>Teacher workspace</small></div></a>
       <nav class="nav" aria-label="Main navigation">${navItems.map(([id, icon, label]) =>
         `<button data-nav="${id}" class="${state.route.name === id ? 'active' : ''}"><span class="symbol">${icon}</span><span>${label}</span></button>`).join('')}</nav>
-      <div class="sidebar-footer"><button id="logout-btn" class="user-menu" style="border:0;background:transparent;color:#cae4dd;cursor:pointer;font:inherit;padding:10px;width:100%;text-align:left">↵ Sign out</button></div>
+      <div class="sidebar-footer"><button id="logout-btn"><span class="symbol">↵</span><span>Sign out</span></button></div>
     </aside>
     <main class="main">
       <header class="topbar">
@@ -224,7 +224,7 @@ function shell(contentHtml, crumb) {
         <div class="top-actions">
           <button class="global-search" id="global-search" aria-label="Global search">⌕ Search everything <kbd>/</kbd></button>
           <button class="icon-btn" id="theme-btn" aria-label="Toggle dark mode">◐</button>
-          <span class="avatar" title="${esc(u.name || u.email)}">${initials}</span>
+          <button class="avatar" id="profile-btn" title="Your teaching profile" aria-label="Your teaching profile">${initials}</button>
         </div>
       </header>
       <div class="page" id="page-root">${contentHtml}</div>
@@ -233,6 +233,7 @@ function shell(contentHtml, crumb) {
   app.querySelectorAll('[data-nav]').forEach((b) => b.addEventListener('click', () => go({ name: b.dataset.nav })));
   document.getElementById('logout-btn').addEventListener('click', async () => { await api.logout(); state.user = null; authScreen(); });
   document.getElementById('theme-btn').addEventListener('click', () => document.body.classList.toggle('dark'));
+  document.getElementById('profile-btn').addEventListener('click', () => go({ name: 'settings', tab: 'profile' }));
   document.getElementById('global-search').addEventListener('click', globalSearch);
   const keyHandler = (e) => {
     if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) { e.preventDefault(); globalSearch(); }
@@ -333,10 +334,15 @@ async function templatesView(root) {
     <div class="template-filter" role="tablist"><button data-f="All">All</button>${state.capabilities.map((c) => `<button data-f="${esc(c.name)}">${esc(c.name)}</button>`).join('')}</div>
     <div class="template-gallery" id="tpl-gallery"></div>`;
   const draw = () => {
+    const tplIcon = {
+      'deped-015-tos': '📋', 'tos-v3': '🧬', 'ilaw': '📘', 'assessment': '📝',
+      'activity-sheet': '✏️', 'parent-advisory': '💬', 'accomplishment-report': '🏅',
+      'ppst-reflection': '💡', 'classroom-plan': '🧭', 'program-plan': '🗓️',
+    };
     root.querySelector('#tpl-gallery').innerHTML = templates
       .filter((t) => filter === 'All' || t.capability === filter)
       .map((t) => `<article class="card template-card">
-        <div class="template-art"><span aria-hidden="true">▤</span></div>
+        <div class="template-art"><span aria-hidden="true">${tplIcon[t.id] || '▤'}</span></div>
         <span class="doc-label">${esc(t.capability)}</span><h2>${esc(t.name)}</h2><p>${esc(t.description)}</p>
         <div><button class="button" data-start="${t.id}">Start workflow</button><button class="button secondary" data-info="${t.id}">Details</button></div></article>`).join('');
     root.querySelectorAll('.template-filter button').forEach((b) => {
@@ -685,6 +691,7 @@ async function workspaceView(root) {
             : `<button class="tool" data-stat-toggle data-to-final="1">✓ Mark as final</button>`}
           <button class="tool" data-export="docx">Export DOCX</button>
           <button class="tool" data-export="pdf">Export PDF</button>
+          ${doc.capability === 'Lesson Planning' ? `<button class="tool" data-slides>Generate slide deck</button>` : ''}
           <button class="tool" onclick="window.print()">Print</button>
         </div>
       </div>
@@ -875,6 +882,107 @@ async function workspaceView(root) {
   root.querySelectorAll('[data-fb]').forEach((b) => b.addEventListener('click', async () => {
     try { await api.feedback(doc.id, { helpful: b.dataset.fb === 'yes' }); toast('Thanks for the feedback'); } catch (e) { toast(e.message); }
   }));
+
+  // AI slide deck — generate structured slides from the lesson plan, then download as PPTX.
+  const SLIDE_STAGES = ['Extracting the topics from your lesson plan', 'Preparing relevant information', 'Drafting slide content', 'Structuring the presentation', 'Finalizing your slide deck'];
+  function runSlideDeck(btn) {
+    const overlay = modal(`<div class="slide-card">
+      <div class="slide-card-head"><div class="slide-card-title">Generate slide deck</div><button class="slide-card-x slide-close" aria-label="Close">✕</button></div>
+      <p class="slide-card-sub">Building an editable PowerPoint from your lesson plan's topics. This usually takes about 15–30 seconds.</p>
+      <p class="slide-card-note">Serves as a pedagogical guide and supplementary material; you are free to refine its content and visual presentation.</p>
+      <div class="slide-stages">${SLIDE_STAGES.map((s) => `<div class="slide-stage" data-key="${esc(s)}"><span class="slide-dot"></span><span class="slide-stage-label">${esc(s)}</span></div>`).join('')}</div>
+      <div class="slide-foot"><span class="slide-note">Preparing…</span></div>
+    </div>`);
+    const stageEls = overlay.querySelectorAll('.slide-stage');
+    const noteEl = overlay.querySelector('.slide-note');
+    function setStage(raw) {
+      const match = SLIDE_STAGES.find((s) => s.toLowerCase() === String(raw).toLowerCase());
+      const active = match || String(raw || '');
+      stageEls.forEach((el) => {
+        el.classList.toggle('active', el.dataset.key === active);
+        el.classList.toggle('done', SLIDE_STAGES.indexOf(el.dataset.key) < SLIDE_STAGES.indexOf(active) && SLIDE_STAGES.indexOf(el.dataset.key) !== -1);
+      });
+      noteEl.textContent = String(raw === 'queued' ? 'Getting ready…' : (active || 'Working…'));
+    }
+    overlay.querySelector('.slide-close').addEventListener('click', () => overlay.remove());
+    setStage('queued');
+
+    // Keep the modal keyed to this job no matter how many times the button is clicked.
+    btn.disabled = true;
+    btn.textContent = 'Generating slide deck…';
+    btn.removeAttribute('data-ready');
+    const restoreReady = () => { btn.disabled = false; btn.textContent = '✓ Slide deck ready'; btn.dataset.ready = '1'; };
+
+    const poll = async () => {
+      try {
+        const s = await api.lessonSlides(doc.id);
+        if (s.status === 'done' && s.result) {
+          const d = s.result;
+          restoreReady();
+          overlay.classList.add('slide-done');
+          overlay.innerHTML = `<div class="slide-card slide-card-done">
+            <div class="slide-badge">✓</div>
+            <div class="slide-done-title">Slide deck ready</div>
+            <p class="slide-done-sub"><strong class="slide-done-name">${esc(d.title || 'Lesson deck')}</strong>${d.subject ? ` · ${esc(d.subject)}` : ''}</p>
+            <p class="slide-done-meta">${(d.slides || []).length} slide${(d.slides || []).length === 1 ? '' : 's'} generated · BLinkMaestra logo fixed on every slide</p>
+            <p class="slide-done-disclaimer">This presentation is intended solely as a pedagogical guide and supplementary material. It may be freely revised in both content and visual design to suit the learners' needs and the teacher's professional judgment.</p>
+            <div class="slide-done-actions">
+              <button class="button slide-dl">Download PPTX</button>
+              <button class="button secondary slide-close">Close</button>
+            </div>
+          </div>`;
+          overlay.querySelector('.slide-dl').addEventListener('click', async () => {
+            try {
+              const blob = await api.downloadLessonSlides(doc.id);
+              const url = URL.createObjectURL(blob);
+              const a = h(`<a href="${url}" download="${esc(d.title || 'lesson')}-slides.pptx"></a>`);
+              document.body.appendChild(a); a.click(); a.remove();
+              URL.revokeObjectURL(url);
+              toast('Slide deck downloaded');
+            } catch (err) { toast(err.message); }
+          });
+          overlay.querySelector('.slide-close').addEventListener('click', () => overlay.remove());
+          overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+          return;
+        }
+        if (s.status === 'failed') {
+          btn.disabled = false;
+          btn.textContent = 'Generate slide deck';
+          btn.removeAttribute('data-ready');
+          overlay.classList.add('slide-done');
+          overlay.innerHTML = `<div class="slide-card slide-card-done">
+            <div class="slide-badge slide-badge-fail">!</div>
+            <div class="slide-done-title">We could not generate the slide deck</div>
+            <p class="slide-done-sub">${esc(s.error || 'Something went wrong while generating the deck. Please try again.')}</p>
+            <div class="slide-done-actions">
+              <button class="button slide-retry">Try again</button>
+              <button class="button secondary slide-close">Close</button>
+            </div>
+          </div>`;
+          overlay.querySelector('.slide-retry').addEventListener('click', () => overlay.remove() || runSlideDeck(btn));
+          overlay.querySelector('.slide-close').addEventListener('click', () => overlay.remove());
+          overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+          return;
+        }
+        setStage(s.stage);
+        setTimeout(poll, 1200);
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = 'Generate slide deck';
+        toast(err.message);
+        overlay.remove();
+      }
+    };
+
+    // Reuse an already-running job if one exists (clicking twice no longer breaks the modal).
+    api.lessonSlides(doc.id)
+      .then((s) => {
+        if (s.status === 'queued' || s.status === 'running' || (s.status === 'done' && s.result)) { poll(); return; }
+        return api.generateLessonSlides(doc.id).then(() => poll());
+      })
+      .catch((err) => { btn.disabled = false; btn.textContent = 'Generate slide deck'; overlay.remove(); toast(err.message); });
+  }
+  root.querySelectorAll('[data-slides]').forEach((b) => b.addEventListener('click', () => runSlideDeck(b)));
 
   // Workflow chaining: carry context forward into the related capability's template.
   root.querySelectorAll('[data-related]').forEach((b) => b.addEventListener('click', () => {
@@ -1146,6 +1254,8 @@ async function subscriptionTab(body) {
   const me = await api.me();
   const enabled = me.payments?.enabled;
   const plan = me.payments?.plan || {};
+  const perMonth = plan.perMonth || 199;
+  const annualTotal = plan.annualTotal || 1990;
   const ent = me.entitlement || {};
 
   if (!enabled) {
@@ -1154,60 +1264,89 @@ async function subscriptionTab(body) {
     return;
   }
 
-  body.innerHTML = `<h2>Subscription</h2>
-    <p class="card-copy" id="sub-status">Loading your account status…</p>
-    <div id="sub-plans" style="margin-top:16px"></div>
-    <section style="margin-top:24px"><div class="card-heading"><h3>Pay with GCash</h3></div>
-      <p class="card-copy">Send the total to this GCash number:
-        <strong style="font-size:18px">${esc(plan.gcashNumber || '')}</strong>. Then enter the payment reference below so we can verify it.</p>
-      <form id="sub-order" style="margin-top:12px">
-        <div class="form-row">
-          ${field('GCash reference number', `<input id="sub-ref" placeholder="e.g. 4409 3123 4567 8901" required>`)}
-          ${field('Months', `<select id="sub-months">${(plan.months || []).map((m) => `<option value="${m}">${m} month${m > 1 ? 's' : ''} — PHP ${(m * (plan.perMonth || 100)).toLocaleString()}</option>`).join('')}</select>`)}
-        </div>
-        ${field('Note (optional)', `<input id="sub-note" placeholder="Anything we should know?">`)}
-        <p class="card-copy" id="sub-quote"></p>
-        <button class="button" type="submit">Submit payment for review</button>
-      </form></section>
-    <section style="margin-top:26px"><div class="card-heading"><h3>Your payments</h3></div><div id="sub-history"></div></section>`;
+  body.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:18px">
+      <div><h2 style="margin:0">Subscription</h2>
+      <p class="card-copy" style="margin:4px 0 0">Manage your BLinkMaestra access and view your payment history.</p></div>
+    </div>
+    <div id="sub-status" class="status-banner" style="margin-bottom:20px"><p class="card-copy" id="sub-status-text" style="margin:0">Loading your account status…</p></div>
 
-  const statusEl = body.querySelector('#sub-status');
+    <div class="sub-layout">
+      <div class="card subscribe-card">
+        <div class="card-heading"><h3>Choose a plan</h3></div>
+        <p class="card-copy" style="margin-top:0">Subscribe when you're ready — your new account already includes free documents to try it out.</p>
+        <div class="plan-picker" style="margin-top:14px">
+          <label class="plan-option">
+            <input type="radio" name="sub-plan" value="monthly" checked>
+            <span class="plan-opt-body"><strong>Monthly</strong><small>PHP ${perMonth.toLocaleString()} / month</small></span>
+          </label>
+          <label class="plan-option">
+            <input type="radio" name="sub-plan" value="annual">
+            <span class="plan-opt-body"><strong>Annual</strong><small>PHP ${annualTotal.toLocaleString()} / year · about PHP ${plan.annualEffectiveMonthly === undefined ? Math.round(annualTotal / 12) : plan.annualEffectiveMonthly}/month</small><em class="best">Best value</em></span>
+          </label>
+        </div>
+        <div class="card-heading" style="margin-top:22px"><h3>Pay with GCash</h3></div>
+        <p class="card-copy" style="margin-top:0">Send the total to this GCash number, then enter the payment reference so we can verify it.</p>
+        <div class="gcash-number">${esc(plan.gcashNumber || '')}</div>
+        <form id="sub-order" style="margin-top:14px">
+          ${field('GCash reference number', `<input id="sub-ref" placeholder="e.g. 4409 3123 4567 8901" required>`)}
+          ${field('Note (optional)', `<input id="sub-note" placeholder="Anything we should know?">`)}
+          <p class="card-copy sub-quote-wrap"><span id="sub-quote"></span></p>
+          <button class="button" type="submit" style="width:100%;padding:12px 16px;font-size:15px">Submit payment for review</button>
+        </form>
+      </div>
+      <div class="card subscribe-side">
+        <div class="card-heading"><h3>Your payments</h3></div>
+        <div id="sub-history"></div>
+      </div>
+    </div>`;
+
+  const statusEl = body.querySelector('#sub-status-text');
   const pendingCount = (me.payments?.pendingOrders || []).length;
+  const remaining = ent.freeAllowance - (ent.freeUsed || 0);
   const renderStatus = () => {
+    const banner = body.querySelector('#sub-status');
     if (ent.status === 'active') {
+      banner.className = 'status-banner ok';
       statusEl.innerHTML = `Your subscription is <strong>active</strong> until <strong>${new Date(ent.activeUntil).toLocaleDateString()}</strong>.`;
     } else if (ent.status === 'free') {
-      statusEl.innerHTML = `You have <strong>${ent.freeAllowance - ent.freeUsed}</strong> of ${ent.freeAllowance} free documents remaining. Once they run out, a subscription is required to keep creating.`;
+      banner.className = 'status-banner info';
+      statusEl.innerHTML = `You have <strong>${remaining}</strong> of ${ent.freeAllowance} free documents remaining. Once they run out, a subscription is required to keep creating.`;
     } else if (ent.status === 'limited' && pendingCount) {
-      statusEl.innerHTML = `<span style="color:#8a6d1a">Your free documents are used up, but a <strong>payment is currently being reviewed</strong>. You'll be sent an email once it's approved, and your access will begin automatically.</span>`;
+      banner.className = 'status-banner warn';
+      statusEl.innerHTML = `Your free documents are used up, but a <strong>payment is currently being reviewed</strong>. You'll be sent an email once it's approved.`;
     } else if (ent.status === 'limited') {
-      statusEl.innerHTML = `<span style="color:#b23c3c">Your free documents are used up and your subscription has expired. Please subscribe below to regain access.</span>`;
+      banner.className = 'status-banner err';
+      statusEl.innerHTML = `Your free documents are used up and your subscription has expired. Please subscribe below to regain access.`;
     } else {
+      banner.className = 'status-banner info';
       statusEl.innerHTML = 'You have full access.';
     }
   };
   renderStatus();
 
-  const monthsEl = body.querySelector('#sub-months');
+  const planEls = body.querySelectorAll('input[name="sub-plan"]');
   const quoteEl = body.querySelector('#sub-quote');
+  const activePlan = () => body.querySelector('input[name="sub-plan"]:checked').value;
   const refreshQuote = async () => {
     try {
-      const q = await api.billingQuote(Number(monthsEl.value));
-      quoteEl.textContent = `Total: PHP ${q.total.toLocaleString()} (${q.months} × PHP ${q.perMonth}/month). Pay via GCash to ${q.gcashNumber}.`;
+      const q = await api.billingQuote(activePlan());
+      quoteEl.textContent = `Total: ${q.currency} ${q.total.toLocaleString()} — ${q.name} plan${q.effectiveMonthly ? ` (about PHP ${q.effectiveMonthly}/month)` : ''}. Send via GCash and enter your reference below.`;
     } catch { quoteEl.textContent = ''; }
   };
   refreshQuote();
-  monthsEl.addEventListener('change', refreshQuote);
+  planEls.forEach((el) => el.addEventListener('change', refreshQuote));
 
   body.querySelector('#sub-order').addEventListener('submit', async (e) => {
     e.preventDefault();
     const g = (id) => body.querySelector(`#${id}`).value.trim();
     try {
-      await api.createOrder({ months: Number(monthsEl.value), ref: g('sub-ref'), note: g('sub-note') });
+      await api.createOrder({ plan: activePlan(), ref: g('sub-ref'), note: g('sub-note') });
       toast('Payment submitted for review! You will be notified once approved.');
       body.querySelector('#sub-ref').value = '';
       body.querySelector('#sub-note').value = '';
       renderHistory();
+      renderStatus();
     } catch (err) { toast(err.message); }
   });
 
@@ -1217,9 +1356,14 @@ async function subscriptionTab(body) {
     try { orders = await api.myOrders(); } catch { hist.innerHTML = '<p class="card-copy">Could not load your payment history.</p>'; return; }
     if (!orders.length) { hist.innerHTML = '<p class="card-copy">No payments yet.</p>'; return; }
     const badges = { pending: 'Pending review', active: 'Approved', rejected: 'Rejected' };
+    const orderLabel = (o) => {
+      if (o.plan === 'annual') return `Annual — PHP ${Number(o.total || 0).toLocaleString()}`;
+      if (o.plan === 'monthly') return `Monthly — PHP ${Number(o.total || 0).toLocaleString()}`;
+      return `${o.months || 0} months — PHP ${Number(o.total || 0).toLocaleString()}`;
+    };
     hist.innerHTML = orders.map((o) => `
       <div class="deadline"><div style="flex:1">
-        <strong>${o.months} months — PHP ${o.total.toLocaleString()}</strong>
+        <strong>${esc(orderLabel(o))}</strong>
         <small>Ref: ${esc(o.ref)} · ${new Date(o.createdAt).toLocaleString()}${o.expiresAt ? ` · Active until ${new Date(o.expiresAt).toLocaleDateString()}` : ''}</small>
       </div><span class="tag">${badges[o.status] || o.status}</span></div>`).join('');
   };
@@ -1233,12 +1377,12 @@ function reportBars(items, labelOf) {
   if (!items || !items.length) return '<p class="card-copy">No data yet.</p>';
   const max = Math.max(...items.map((i) => i.count));
   return items.slice(0, 8).map((i) => `
-    <div style="margin:8px 0">
-      <div style="display:flex;justify-content:space-between;font-size:13px">
+    <div style="margin:9px 0">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
         <span>${esc(labelOf(i))}</span><strong>${i.count}</strong>
       </div>
       <div style="background:var(--line);height:8px;border-radius:6px;overflow:hidden">
-        <div style="height:100%;width:${(i.count / max * 100).toFixed(1)}%;background:#0b5e55"></div>
+        <div style="height:100%;width:${(i.count / max * 100).toFixed(1)}%;background:var(--forest);border-radius:6px"></div>
       </div>
     </div>`).join('');
 }
@@ -1247,23 +1391,46 @@ function reportStat(label, value, sub) {
   return `<div class="stat"><span>${esc(label)}</span><strong>${value}</strong>${sub ? `<small>${esc(sub)}</small>` : ''}</div>`;
 }
 
+// A titled panel that holds a chart/list/table inside a card.
+function reportPanel(title, body) {
+  return `<section class="card" style="margin:0;display:flex;flex-direction:column">
+    <h3 style="font:700 14px 'DM Sans',system-ui,sans-serif;margin:0 0 10px;color:var(--ink)">${esc(title)}</h3>
+    ${body}
+  </section>`;
+}
+
 function renderAdminReport(r) {
   const money = (n) => (n || 0).toLocaleString();
 
   // 7-day activity as a simple inline bar chart.
-  const trend = (obj) => {
+  const trend = (obj, color) => {
     const days = Object.keys(obj || {}).sort();
     if (!days.length) return '<p class="card-copy">No activity yet.</p>';
     const max = Math.max(...days.map((d) => obj[d]), 1);
     return `<div style="display:flex;align-items:flex-end;gap:6px;height:64px;margin-top:8px">
       ${days.map((d) => `<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%">
-        <div title="${d}: ${obj[d]}" style="width:100%;min-height:2px;background:#0b5e55;border-radius:3px;height:${(obj[d] / max * 100).toFixed(0)}%"></div>
+        <div title="${d}: ${obj[d]}" style="width:100%;min-height:2px;background:${color};border-radius:3px;height:${(obj[d] / max * 100).toFixed(0)}%"></div>
         <small style="font-size:9px;margin-top:3px;opacity:.6">${d.slice(5)}</small></div>`).join('')}
     </div>`;
   };
 
+  const avg = (obj) => { const v = Object.values(obj || {}); let total = 0; for (const n of v) total += n; return v.length ? Math.round(total / v.length) : 0; };
+
   return `
-    <div class="stat-grid" style="margin-top:4px">
+    <div class="grid-2" style="margin-bottom:22px">
+      <section class="card"><div class="report-hero">
+        <p class="eyebrow" style="margin-bottom:6px">Reports &amp; insights</p>
+        <h2 style="font:700 24px Fraunces,serif;margin:0;color:var(--ink)">Platform overview</h2>
+        <p class="card-copy">${r.plan?.currency} ${money(r.subscribers?.revenue?.lifetime)} lifetime revenue · <strong>${r.documents?.total ?? 0}</strong> documents · <strong>${r.generations?.total ?? 0}</strong> AI generations</p>
+        <p class="card-copy" style="margin-top:2px;font-size:12px;opacity:.7">Last refresh ${new Date(r.generatedAt).toLocaleString()}</p>
+      </div></section>
+      <section class="card"><div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;height:100%;align-content:center">
+        ${reportStat('Docs / day (7d)', avg(r.documents?.last7), 'average')}
+        ${reportStat('Gen / day (7d)', avg(r.generations?.last7), 'average')}
+      </div></section>
+    </div>
+
+    <div class="stat-grid" style="margin-bottom:26px">
       ${reportStat('Teachers', r.users?.teachers ?? 0, 'accounts')}
       ${reportStat('Active subscribers', r.subscribers?.active?.total ?? 0, 'right now')}
       ${reportStat('Free tier', r.tierBreakdown ? r.tierBreakdown.free : '—', r.paymentsEnabled ? 'unsubscribed within allowance' : 'payments OFF')}
@@ -1272,75 +1439,53 @@ function renderAdminReport(r) {
       ${reportStat('Generations', r.generations?.total ?? 0, 'AI requests')}
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px;margin-top:22px">
-      <div>
-        <h3 class="card-heading" style="display:block">Active subscribers by plan</h3>
-        ${reportBars([...(r.subscribers?.active?.byTier || [])].map((t) => ({ key: `${t.months}`, count: t.count })), (i) => `${i.key} month${i.key > 1 ? 's' : ''}`)}
-        ${!(r.subscribers?.active?.byTier || []).length ? '<p class="card-copy">No active subscriptions.</p>' : ''}
-      </div>
-      <div>
-        <h3 class="card-heading" style="display:block">Paid all-time by plan</h3>
-        ${reportBars([...(r.subscribers?.paidAllTime?.byTier || [])].map((t) => ({ key: `${t.months}`, count: t.count })), (i) => `${i.key} month${i.key > 1 ? 's' : ''}`)}
-        ${!(r.subscribers?.paidAllTime?.byTier || []).length ? '<p class="card-copy">No paid orders yet.</p>' : ''}
-      </div>
-      <div>
-        <h3 class="card-heading" style="display:block">Documents by capability</h3>
-        ${reportBars(r.documents?.byCapability || [], (i) => i.key)}
-      </div>
-      <div>
-        <h3 class="card-heading" style="display:block">Generations by template</h3>
-        ${reportBars(r.generations?.byTemplate || [], (i) => i.key || 'Untracked')}
-      </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:18px;margin-bottom:26px">
+      ${reportPanel('Active subscribers by plan', reportBars([...(r.subscribers?.active?.byTier || [])].map((t) => ({ key: t.plan || `${t.months} month${t.months > 1 ? 's' : ''}`, count: t.count })), (i) => `${i.key}`))}
+      ${reportPanel('Paid all-time by plan', reportBars([...(r.subscribers?.paidAllTime?.byTier || [])].map((t) => ({ key: t.plan || `${t.months} month${t.months > 1 ? 's' : ''}`, count: t.count })), (i) => `${i.key}`))}
+      ${reportPanel('Documents by capability', reportBars(r.documents?.byCapability || [], (i) => i.key))}
+      ${reportPanel('Generations by template', reportBars(r.generations?.byTemplate || [], (i) => i.key || 'Untracked'))}
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px;margin-top:22px">
-      <div>
-        <h3 class="card-heading" style="display:block">Documents created (last 7 days)</h3>
-        ${trend(r.documents?.last7)}
-      </div>
-      <div>
-        <h3 class="card-heading" style="display:block">Generations (last 7 days)</h3>
-        ${trend(r.generations?.last7)}
-      </div>
-      <div>
-        <h3 class="card-heading" style="display:block">Orders</h3>
-        <table style="width:100%;font-size:13px;border-collapse:collapse">
-          <tbody>
-            <tr><td style="padding:4px 0">Pending review</td><td style="text-align:right"><strong>${r.orders?.pending ?? 0}</strong></td></tr>
-            <tr><td style="padding:4px 0">Approved / paid</td><td style="text-align:right"><strong>${r.orders?.paid ?? 0}</strong></td></tr>
-            <tr><td style="padding:4px 0">Rejected</td><td style="text-align:right"><strong>${r.orders?.rejected ?? 0}</strong></td></tr>
-          </tbody>
-        </table>
-      </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:18px;margin-bottom:26px">
+      ${reportPanel('Documents created (7 days)', trend(r.documents?.last7, 'var(--forest)'))}
+      ${reportPanel('Generations (7 days)', trend(r.generations?.last7, 'var(--blue)'))}
+      ${reportPanel('Orders', `
+        ${r.orders ? `
+        <div style="display:flex;flex-direction:column;gap:11px">
+          <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);padding-bottom:9px"><span class="card-copy" style="margin:0">Pending review</span><strong>${r.orders?.pending ?? 0}</strong></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);padding-bottom:9px"><span class="card-copy" style="margin:0">Approved / paid</span><strong>${r.orders?.paid ?? 0}</strong></div>
+          <div style="display:flex;justify-content:space-between;align-items:center"><span class="card-copy" style="margin:0">Rejected</span><strong>${r.orders?.rejected ?? 0}</strong></div>
+        </div>` : '<p class="card-copy">No orders yet.</p>'}`)}
     </div>
-    <div style="margin-top:28px">
-      <h3 class="card-heading" style="display:block;margin-bottom:12px">User listing &amp; document generation</h3>
-      <div style="background:white;border:1px solid var(--line);border-radius:12px;overflow:x-auto">
+
+    <div style="margin-top:4px">
+      <h3 style="font:700 15px 'DM Sans',system-ui,sans-serif;color:var(--ink);margin:0 0 12px">User listing &amp; document generation</h3>
+      <div style="border:1px solid var(--line);border-radius:12px;overflow:auto;background:var(--card,var(--white))">
         <table style="width:100%;border-collapse:collapse;font-size:13px;text-align:left">
           <thead>
-            <tr style="border-bottom:1px solid var(--line);background:#f8faf9">
-              <th style="padding:10px 14px;font-weight:600">Email</th>
-              <th style="padding:10px 14px;font-weight:600">Role</th>
-              <th style="padding:10px 14px;font-weight:600">Tier / Status</th>
-              <th style="padding:10px 14px;font-weight:600;text-align:right">Documents Generated</th>
+            <tr style="border-bottom:1px solid var(--line);background:var(--table-head,#f8faf9)">
+              <th style="padding:12px 16px;font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px">Email</th>
+              <th style="padding:12px 16px;font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px">Role</th>
+              <th style="padding:12px 16px;font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px">Tier / Status</th>
+              <th style="padding:12px 16px;font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;text-align:right">Documents Generated</th>
             </tr>
           </thead>
           <tbody>
             ${(r.userList || []).map((u) => `
               <tr style="border-bottom:1px solid var(--line)">
-                <td style="padding:10px 14px"><strong>${esc(u.email)}</strong><br><small style="opacity:.6">Joined ${new Date(u.createdAt).toLocaleDateString()}</small></td>
-                <td style="padding:10px 14px"><span class="tag" style="text-transform:capitalize">${esc(u.role)}</span></td>
-                <td style="padding:10px 14px">${esc(u.tier)}</td>
-                <td style="padding:10px 14px;text-align:right"><strong>${u.documentsCount}</strong></td>
+                <td style="padding:12px 16px"><strong>${esc(u.email)}</strong><br><small style="opacity:.6">Joined ${new Date(u.createdAt).toLocaleDateString()}</small></td>
+                <td style="padding:12px 16px"><span class="tag" style="text-transform:capitalize">${esc(u.role)}</span></td>
+                <td style="padding:12px 16px">${esc(u.tier)}</td>
+                <td style="padding:12px 16px;text-align:right"><strong>${u.documentsCount}</strong></td>
               </tr>
             `).join('')}
-            ${!(r.userList || []).length ? '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--muted)">No users found.</td></tr>' : ''}
+            ${!(r.userList || []).length ? '<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--muted)">No users found.</td></tr>' : ''}
           </tbody>
         </table>
       </div>
     </div>
 
-    <p class="card-copy" style="margin-top:16px;font-size:12px;opacity:.7">Generated ${new Date(r.generatedAt).toLocaleString()} · free allowance ${r.plan?.freeAllowance ?? 5} per teacher.</p>
+    <p class="card-copy" style="margin-top:16px;font-size:12px;opacity:.7">Free allowance ${r.plan?.freeAllowance ?? 5} per teacher.</p>
   `;
 }
 
@@ -1453,21 +1598,32 @@ function activityRow(d, previewText) {
 async function renderAdminPaymentsTab(body, ov) {
   const enabled = !!ov?.payments?.enabled;
   body.innerHTML = `
-    <section class="card" style="margin-bottom:20px"><div class="card-heading"><h2>Payments &amp; subscriptions</h2></div>
-      <p class="card-copy">Payment is currently <strong>${enabled ? 'ON — teachers are billed after 5 free documents' : 'OFF — everyone can create freely'}</strong>.</p>
-      <div style="display:flex;align-items:center;gap:14px;margin-top:10px">
-        <button class="button" id="adm-pay-toggle" data-on="${enabled}">${enabled ? 'Turn payments OFF' : 'Turn payments ON'}</button>
-        <span class="card-copy">${enabled ? 'Use this switch once your teachers are done testing.' : 'Turn this on when your teachers are done testing.'}</span>
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:18px">
+      <div><h2 style="margin:0">Payments &amp; subscriptions</h2>
+      <p class="card-copy" style="margin:4px 0 0">Review GCash payments and control billing for your teachers.</p></div>
+      <span class="billing-pill ${enabled ? 'on' : 'off'}">${enabled ? 'Billing enabled' : 'Billing off'}</span>
+    </div>
+
+    <div class="card billing-toggle-card">
+      <div>
+        <h3 style="margin:0;font-size:15px">Accept teacher payments</h3>
+        <p class="card-copy" style="margin:4px 0 0">${enabled ? 'Teachers are billed after their 5 free documents run out.' : 'Everyone can currently create freely — billing is paused.'}</p>
       </div>
-      <div style="margin-top:20px"><div class="card-heading"><h3>Pending payments${ov?.payments?.pendingOrders ? ` (${ov.payments.pendingOrders})` : ''}</h3></div>
-        <div id="adm-pay-orders"><p class="card-copy">Loading…</p></div>
-      </div></section>`;
+      <label class="switch">
+        <input type="checkbox" id="adm-pay-toggle" ${enabled ? 'checked' : ''}>
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div style="margin-top:24px"><div class="card-heading"><h3>Pending payments${ov?.payments?.pendingOrders ? ` <span class="tag pending-count">${ov.payments.pendingOrders}</span>` : ''}</h3></div>
+      <div class="card bill-orders-card" style="padding:6px"><div id="adm-pay-orders"><p class="card-copy">Loading…</p></div></div>
+    </div>`;
 
   const payToggleBtn = body.querySelector('#adm-pay-toggle');
-  payToggleBtn.addEventListener('click', async () => {
+  payToggleBtn.addEventListener('change', async () => {
     payToggleBtn.disabled = true;
     try {
-      await api.setPaymentsEnabled(payToggleBtn.dataset.on === 'false');
+      await api.setPaymentsEnabled(payToggleBtn.checked);
       toast('Payment setting updated.');
       adminView(body.closest('#page-root') || document.getElementById('page-root'));
     } catch (err) { toast(err.message); payToggleBtn.disabled = false; }
@@ -1477,14 +1633,28 @@ async function renderAdminPaymentsTab(body, ov) {
   let orders = [];
   try { orders = await api.adminOrders(); } catch { holder.innerHTML = '<p class="card-copy">Could not load payments.</p>'; return; }
   const pending = orders.filter((o) => o.status === 'pending');
-  if (!pending.length) { holder.innerHTML = '<p class="card-copy">No payments waiting for review.</p>'; return; }
-  holder.innerHTML = pending.map((o) => `
-    <div class="deadline" style="margin-bottom:10px"><div style="flex:1">
-      <strong>${esc(o.user?.email || o.userId)}</strong>
-      <small>${o.months} months · PHP ${o.total.toLocaleString()} · Ref ${esc(o.ref)}${o.note ? ` · "${esc(o.note)}"` : ''}<br>Submitted ${new Date(o.createdAt).toLocaleString()}</small>
-    </div>
-      <button class="tool" data-pay-approve="${esc(o.id)}">Approve</button>
-      <button class="tool" data-pay-reject="${esc(o.id)}">Reject</button></div>`).join('');
+  if (!pending.length) { holder.innerHTML = '<p class="card-copy" style="padding:16px 12px;margin:0">No payments waiting for review.</p>'; return; }
+  const planLabel = (o) => {
+    if (o.plan === 'annual') return 'Annual';
+    if (o.plan === 'monthly') return 'Monthly';
+    return `${o.months} month${o.months !== 1 ? 's' : ''}`;
+  };
+  holder.innerHTML = `
+    <div class="bill-table" role="table">
+      <div class="bill-row bill-head" role="row">
+        <span>Teacher</span><span>Plan &amp; amount</span><span class="hide-mobile">Reference</span><span class="actions">Actions</span>
+      </div>
+      ${pending.map((o) => `
+      <div class="bill-row" role="row">
+        <span><strong>${esc(o.user?.name || o.user?.email || o.userId)}</strong><small>${o.user?.email ? esc(o.user.email) : ''}<br>Submitted ${new Date(o.createdAt).toLocaleString()}</small></span>
+        <span><em class="plan-tag ${o.plan}">${esc(planLabel(o))}</em><small>PHP ${o.total.toLocaleString()}${o.note ? ` · "${esc(o.note)}"` : ''}</small></span>
+        <span class="hide-mobile"><code class="ref-code">${esc(o.ref)}</code></span>
+        <span class="actions">
+          <button class="bill-btn approve" data-pay-approve="${esc(o.id)}">Approve</button>
+          <button class="bill-btn reject" data-pay-reject="${esc(o.id)}">Reject</button>
+        </span>
+      </div>`).join('')}
+    </div>`;
   const rerender = () => adminView(body.closest('#page-root') || document.getElementById('page-root'));
   holder.querySelectorAll('[data-pay-approve]').forEach((b) => b.addEventListener('click', async () => {
     await api.approveOrder(b.dataset.payApprove); toast('Payment approved. Access granted.'); rerender();
@@ -1496,6 +1666,100 @@ async function renderAdminPaymentsTab(body, ov) {
   }));
 }
 
+// Renders the Admin -> Users & subscriptions tab: a directory of every user with
+// their subscription status, plan, free-allowance usage, expiry, and order history.
+async function renderAdminUsersTab(body) {
+  body.innerHTML = `<p class="card-copy">Loading users…</p>`;
+  let data;
+  try { data = await api.adminSubscriptionDirectory(); }
+  catch { body.innerHTML = '<p class="card-copy">Could not load users.</p>'; return; }
+
+  const users = data.users || [];
+  const planInfo = data.plan || {};
+  const money = (n) => (Number(n) || 0).toLocaleString();
+
+  const statusBadge = (s) => {
+    const map = {
+      active: ['Approved / active', 'background:#e3f2ec;color:#0b5e55'],
+      free: ['Free trial', 'background:#edf3f7;color:#164b6b'],
+      limited: ['Limited — needs subscription', 'background:#fbecec;color:#a13030'],
+      admin: ['Admin', 'background:#f3e9da;color:#7a5a20'],
+    };
+    const [label, style] = map[s] || [s, ''];
+    return `<span class="tag" style="${style}">${esc(label)}</span>`;
+  };
+
+  const remaining = (u) => {
+    if (u.status === 'active') return '—';
+    return `${Math.max(0, u.freeAllowance - u.freeUsed)} of ${u.freeAllowance} free docs left`;
+  };
+
+  const expiry = (u) => u.activeUntil
+    ? `<strong>${new Date(u.activeUntil).toLocaleDateString()}</strong>${new Date(u.activeUntil).getTime() < Date.now() ? ' <span style="color:#a13030">(expired)</span>' : ''}`
+    : '—';
+
+  body.innerHTML = `
+    <div class="stat-grid" style="margin-bottom:24px">
+      <div class="stat"><span>Total users</span><strong>${users.length}</strong></div>
+      <div class="stat"><span>Active subscribers</span><strong>${users.filter((u) => u.status === 'active').length}</strong></div>
+      <div class="stat"><span>Free trial</span><strong>${users.filter((u) => u.status === 'free').length}</strong></div>
+      <div class="stat"><span>Limited / need payment</span><strong>${users.filter((u) => u.status === 'limited').length}</strong></div>
+    </div>
+
+    <p class="card-copy" style="margin-top:4px">Current pricing: <strong>Monthly — PHP ${money(planInfo.perMonth)}/mo</strong> · <strong>Annual — PHP ${money(planInfo.annualTotal)}/yr</strong>. Free allowance ${planInfo.freeAllowance} documents per teacher.</p>
+
+    <div style="margin-top:16px;display:flex;flex-direction:column;gap:14px">
+      ${users.length ? users.map((u) => `
+        <div class="card" style="padding:18px;margin:0">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+            <div style="min-width:0">
+              <strong style="font-size:15px">${esc(u.name || u.email)}</strong>
+              <small style="display:block;color:var(--muted);margin-top:2px">${esc(u.email)}</small>
+              <small style="display:block;color:var(--muted)">Joined ${new Date(u.createdAt).toLocaleDateString()}</small>
+            </div>
+            <div style="text-align:right">${statusBadge(u.status)}
+              <div style="margin-top:8px;display:flex;gap:8px"><span class="tag">${esc(u.role)}</span></div>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:14px;background:var(--mint);border-radius:10px;padding:12px;font-size:13px">
+            <div><small style="color:var(--muted);display:block">Free docs used</small><strong>${u.freeUsed} / ${u.freeAllowance}</strong></div>
+            <div><small style="color:var(--muted);display:block">Free remaining</small><strong>${esc(remaining(u))}</strong></div>
+            <div><small style="color:var(--muted);display:block">Active plan</small><strong>${u.activePlan ? esc(u.activePlan.plan) + ` — ${money(u.activePlan.total)}` : 'None'}</strong></div>
+            <div><small style="color:var(--muted);display:block">Access until</small>${expiry(u)}</div>
+          </div>
+
+          ${u.pendingCount ? `<div style="margin-top:12px;padding:10px 12px;border:1px solid #f2dda8;background:#fdf7e9;border-radius:9px;font-size:13px"><strong>${u.pendingCount} payment(s) pending review</strong> — see Payments tab to approve.</div>` : ''}
+
+          ${(u.subscriptions || []).length ? `<div style="margin-top:14px">
+            <p style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 0 8px">Payment history</p>
+            <div style="border:1px solid var(--line);border-radius:10px;overflow:auto">
+              <table style="width:100%;border-collapse:collapse;font-size:13px;text-align:left">
+                <thead><tr style="border-bottom:1px solid var(--line);background:var(--table-head,#f8faf9)">
+                  <th style="padding:9px 12px;font-size:11px;text-transform:uppercase;color:var(--muted)">Plan</th>
+                  <th style="padding:9px 12px;font-size:11px;text-transform:uppercase;color:var(--muted)">Amount</th>
+                  <th style="padding:9px 12px;font-size:11px;text-transform:uppercase;color:var(--muted)">Status</th>
+                  <th style="padding:9px 12px;font-size:11px;text-transform:uppercase;color:var(--muted)">Reference</th>
+                  <th style="padding:9px 12px;font-size:11px;text-transform:uppercase;color:var(--muted)">Paid</th>
+                  <th style="padding:9px 12px;font-size:11px;text-transform:uppercase;color:var(--muted)">Expires</th>
+                </tr></thead>
+                <tbody>${u.subscriptions.map((s) => `
+                  <tr style="border-bottom:1px solid var(--line)">
+                    <td style="padding:9px 12px"><strong>${esc(s.plan)}</strong></td>
+                    <td style="padding:9px 12px">PHP ${money(s.total)}</td>
+                    <td style="padding:9px 12px">${s.status === 'active' ? '<span class="tag" style="background:#e3f2ec;color:#0b5e55">Approved</span>' : s.status === 'pending' ? '<span class="tag" style="background:#fff3cd;color:#8a6d1a">Pending</span>' : '<span class="tag" style="background:#fbecec;color:#a13030">Rejected</span>'}</td>
+                    <td style="padding:9px 12px">${esc(s.ref || '')}</td>
+                    <td style="padding:9px 12px">${s.paidAt ? new Date(s.paidAt).toLocaleDateString() : '—'}</td>
+                    <td style="padding:9px 12px">${s.expiresAt ? new Date(s.expiresAt).toLocaleDateString() : '—'}</td>
+                  </tr>`).join('')}</tbody>
+              </table>
+            </div>
+          </div>` : ''}
+        </div>`).join('') : '<p class="card-copy">No users yet.</p>'}
+    </div>
+  `;
+}
+
 async function adminView(root) {
   let ov;
   try { ov = await (await fetch('/api/admin/overview', { credentials: 'same-origin' })).json(); }
@@ -1505,7 +1769,7 @@ async function adminView(root) {
   const tab = state.route.tab || 'overview';
   root.innerHTML = `<p class="eyebrow">Administration</p><h1 class="title">System management</h1>
     <div class="admin-tabs" role="tablist">
-      ${[['overview', 'Overview'], ['activity', 'Teacher activity'], ['payments', 'Payments & subscriptions'], ['reports', 'Reports & insights']].map(([id, label]) =>
+      ${[['overview', 'Overview'], ['activity', 'Teacher activity'], ['users', 'Users & subscriptions'], ['payments', 'Payments & subscriptions'], ['reports', 'Reports & insights']].map(([id, label]) =>
         `<button data-tab="${id}" class="${tab === id ? 'active' : ''}">${label}</button>`).join('')}
     </div><div id="admin-body"></div>`;
 
@@ -1517,6 +1781,7 @@ async function adminView(root) {
   if (tab === 'activity') { renderAdminActivityTab(body); return; }
   if (tab === 'reports') { renderAdminReportsTab(body); return; }
   if (tab === 'payments') { renderAdminPaymentsTab(body, ov); return; }
+  if (tab === 'users') { renderAdminUsersTab(body); return; }
 
   body.innerHTML = `<p class="subtitle">Manage the competency library, knowledge references, the AI provider, and templates. Changes apply to all teachers.</p>
     <div class="stat-grid">
@@ -1526,15 +1791,15 @@ async function adminView(root) {
       <div class="stat"><span>Custom knowledge</span><strong>${ov.knowledge.length}</strong></div>
     </div>
 
-    <section class="card" style="margin-bottom:20px"><div class="card-heading"><h2>AI provider configuration</h2></div>
-      <p class="card-copy">Manage the shared AI key pool used by every teacher. Add one or more keys (any OpenAI-compatible endpoint via the base URL); providing several keys is a great way to absorb free-tier limits and avoid "daily allowance" pauses. Keys are stored encrypted and never shown back once saved.</p>
-      <div id="ai-pool-status" class="card-copy" style="margin-top:4px;color:#888"></div>
-      <div id="ai-pool-editor" style="margin-top:8px"></div>
-      <form id="adm-aiform" style="margin-top:8px">
-        <p class="card-copy" id="ai-status" style="margin-top:4px"></p>
-        <button class="button" type="submit" style="margin-top:8px">Save AI configuration</button>
+    <section class="card ai-section" style="margin-bottom:20px"><div class="card-heading"><h2>AI provider configuration</h2></div>
+      <p class="card-copy ai-lede">Manage the shared AI key pool used by every teacher. Add one or more keys (any OpenAI-compatible endpoint via the base URL); providing several keys absorbs free-tier limits and avoids "daily allowance" pauses. Keys are stored encrypted and never shown again once saved.</p>
+      <div id="ai-pool-status" class="ai-status"></div>
+      <div class="pool-wrap"><div id="ai-pool-editor" class="pool-editor"> </div></div>
+      <form id="adm-aiform" class="ai-save-form">
+        <p class="card-copy" id="ai-status" style="margin:0 0 4px"></p>
+        <button class="button" type="submit">Save AI configuration</button>
       </form>
-      <p class="card-copy" style="margin-top:10px;font-size:.85em;color:#777"><strong>Free-tier note:</strong> Most free AI accounts (e.g. Groq) cap tokens per day and per minute. When a key hits its daily cap, the pool automatically rotates to the next key and, if all are capped, teachers briefly see a "try again in ~Xm" message instead of a hard failure. Adding more keys/models increases shared capacity for everyone.</p>
+      <p class="ai-note"><strong>Free-tier note:</strong> Most free AI accounts (e.g. Groq) cap tokens per day and per minute. When a key hits its daily cap, the pool rotates to the next key; if all are capped, teachers briefly see a "try again in ~Xm" message instead of a hard failure. Adding more keys/models increases shared capacity for everyone.</p>
     </section>
 
     <section class="card" style="margin-bottom:20px"><div class="card-heading"><h2>Import learning competencies</h2></div>
@@ -1589,20 +1854,18 @@ S6MT-Ia-c-1, Grade 6, Science, Describe mixtures and compounds, Q1'></textarea>
   let poolRows = [];
   const buildPoolRow = (entry = {}) => {
     const row = document.createElement('div');
-    row.className = 'form-row';
-    row.style.marginBottom = '6px';
-    row.style.alignItems = 'center';
+    row.className = 'pool-row';
     row.dataset.id = entry.id || '';
     row.innerHTML = `
-      <input class="p-label" placeholder="Label" value="${(entry.label || '').replace(/"/g, '&quot;')}" style="max-width:120px">
-      <input class="p-baseurl" placeholder="Base URL" value="${(entry.baseUrl || '').replace(/"/g, '&quot;')}" style="max-width:210px">
-      <input class="p-model" placeholder="Model" value="${(entry.model || '').replace(/"/g, '&quot;')}" style="max-width:180px">
-      <input class="p-key" type="password" placeholder="${entry.key ? 'unchanged' : 'API key...'}" value="${(entry.key && !entry.key.includes('••••') ? entry.key : '').replace(/"/g, '&quot;')}">
-      <button type="button" class="p-remove button button-small" style="margin-left:4px">Remove</button>`;
+      <label class="pf">Label<input class="p-label" placeholder="e.g. Groq free" value="${(entry.label || '').replace(/"/g, '&quot;')}"></label>
+      <label class="pf">Base URL<input class="p-baseurl" placeholder="https://api.groq.com/openai/v1" value="${(entry.baseUrl || '').replace(/"/g, '&quot;')}"></label>
+      <label class="pf">Model<input class="p-model" placeholder="llama-3.3-70b-versatile" value="${(entry.model || '').replace(/"/g, '&quot;')}"></label>
+      <label class="pf">API key<input class="p-key" type="password" placeholder="${entry.key ? 'unchanged' : 'sk-...'}" value="${(entry.key && !entry.key.includes('••••') ? entry.key : '').replace(/"/g, '&quot;')}"></label>
+      <button type="button" class="p-remove" title="Remove this key" aria-label="Remove key">Remove</button>`;
     row.querySelector('.p-remove').addEventListener('click', () => { row.remove(); poolRows = poolRows.filter((r) => r !== row); });
     return row;
   };
-  const addPoolRow = (entry) => { const row = buildPoolRow(entry); poolEditor.appendChild(row); poolRows.push(row); };
+  const addPoolRow = (entry) => { const row = buildPoolRow(entry); poolEditor.insertBefore(row, addBtn); poolRows.push(row); };
 
   (async () => {
     try {
@@ -1624,8 +1887,8 @@ S6MT-Ia-c-1, Grade 6, Science, Describe mixtures and compounds, Q1'></textarea>
   const addBtn = document.createElement('button');
   addBtn.type = 'button';
   addBtn.id = 'ai-add-pool';
-  addBtn.className = 'button button-small';
-  addBtn.textContent = '+ Add key';
+  addBtn.className = 'button button-small add-key';
+  addBtn.textContent = '+ Add another key';
   poolEditor.appendChild(addBtn);
 
   root.querySelector('#adm-aiform').addEventListener('submit', async (e) => {
@@ -1669,14 +1932,137 @@ S6MT-Ia-c-1, Grade 6, Science, Describe mixtures and compounds, Q1'></textarea>
 }
 
 function helpView(root) {
-  root.innerHTML = `<h1 class="title">Help center</h1><div style="height:20px"></div>
-    <div class="faq">
-      <details><summary>How do I create a lesson plan?</summary><p>Pick Templates → Daily Lesson Log. Your grade level and subject are filled from your profile automatically; you'll only be asked for what's missing.</p></details>
-      <details><summary>Can AI edit part of my document?</summary><p>Yes. Select text in the editor, then choose an action such as Improve, Simplify, or Translate. You always confirm before changes are applied.</p></details>
-      <details><summary>Are my documents private?</summary><p>Yes. Only your account can access them, verified server-side on every request.</p></details>
-      <details><summary>Does Maestra invent DepEd requirements?</summary><p>No. Official references are only used when available; anything uncertain is labeled as an assumption.</p></details>
-      <details><summary>Sometimes AI says "daily allowance used up" — what does that mean?</summary><p>The AI service is shared by all teachers, and the free tier has a limited number of tokens each day. When that allowance runs out, you'll briefly see a "try again in ~Xm" message; other keys or a refreshed allowance kick in shortly after, so it's temporary and you don't need to do anything.</p></details>
-    </div>`;
+  const ARTICLES = [
+    { cat: 'Getting started', icon: '🌱', title: 'Welcome to BLinkMaestra — what is this?',
+      body: 'BLinkMaestra is a teacher assistant that turns your working documents into DepEd-ready outputs. You describe the document you need (like a lesson plan, competency-based assessment, or class program), and Maestra drafts it for you using official references. You stay in control: every draft is editable and every AI change is something you approve first.' },
+    { cat: 'Getting started', icon: '🪜', title: 'Creating my first document — step by step',
+      body: 'Open Templates, pick a type that matches your need, then follow the guided workflow. Your grade level and subject are pulled from your profile automatically, so you only answer the few questions that are missing. When you are ready, hit Generate — Maestra drafts the document in your workspace where you can read, edit, and download it.' },
+    { cat: 'Getting started', icon: '🗂️', title: 'What template types are available?',
+      body: 'Maestra ships with templates for lesson planning (Daily Lesson Log, learning activity sheets), classroom assessment (Table of Specification, assessments with answer keys), parent communication, accomplishment reports, reflections for professional growth, and more. Each template asks only the details that matter and follows the current DepEd format it represents.' },
+    { cat: 'Getting started', icon: '🧭', title: 'What is the guided workflow?',
+      body: 'The guided workflow breaks document creation into small steps. It fills in whatever it already knows about you, prompts you for the rest, and shows what is still missing so nothing is left half-finished. You can review your answers before anything is generated.' },
+    { cat: 'Getting started', icon: '👤', title: 'Setting up my profile and preferences',
+      body: 'In Settings → Preferences you can set your name, grade level, and subject. Maestra uses these to pre-fill your documents so you do not repeat the same details every time. You can update them anytime and they apply to future documents immediately.' },
+
+    { cat: 'Using the AI editor', icon: '✍️', title: 'How do I create a document?',
+      body: 'Go to Templates, choose the type you need, and follow the workflow. Your grade level and subject are filled from your profile automatically; you will only be asked for what is missing. When you are ready, press Generate.' },
+    { cat: 'Using the AI editor', icon: '✂️', title: 'Can the AI edit part of my document?',
+      body: 'Yes. Select text in the editor, then choose an action like Improve, Simplify, or Translate. You always review the result and confirm before any change is applied to your document.' },
+    { cat: 'Using the AI editor', icon: '🔄', title: 'Editing and revising my draft',
+      body: 'Every draft opens in your document workspace. You can edit text directly, ask the AI to improve a selection, and regenerate or revise parts. You are never locked into a draft — treat it as a strong starting point and make it yours.' },
+    { cat: 'Using the AI editor', icon: '💾', title: 'Are my documents saved automatically?',
+      body: 'Yes. Your work is kept in My Documents and synced to your account as you go, so you can switch pages or close and come back later without losing progress.' },
+    { cat: 'Using the AI editor', icon: '🎨', title: 'Why does the draft differ from the official DepEd form?',
+      body: 'Maestra follows the official reference for a template whenever one is available. When a detail is not covered by an official source, Maestra uses a reasonable assumption and clearly marks it so you can double-check and adjust it before submitting.' },
+
+    { cat: 'Privacy & data', icon: '🔒', title: 'Are my documents private?',
+      body: 'Yes. Only your account can access your documents, and this is verified server-side on every request. Your materials are not shared with other teachers or used to train external models.' },
+    { cat: 'Privacy & data', icon: '🛡️', title: 'Where are my API / AI keys stored?',
+      body: 'AI keys configured by the admin are stored encrypted and never shown back in full once saved. Teachers generate documents through the shared, admin-managed key pool — individual teachers do not enter their own keys.' },
+    { cat: 'Privacy & data', icon: '📖', title: 'Does Maestra invent DepEd requirements?',
+      body: 'No. Official references are only used when one is available; anything uncertain or not covered by a source is labeled as an assumption so you can verify it yourself.' },
+
+    { cat: 'Billing & subscription', icon: '🎁', title: 'Do I get free documents before subscribing?',
+      body: 'Yes. Every new account starts with free documents to try Maestra before deciding whether to subscribe. Once those run out, a subscription keeps access going.' },
+    { cat: 'Billing & subscription', icon: '📅', title: 'What plans are available, and how much do they cost?',
+      body: 'Two subscription plans are offered: Monthly for PHP 199 per month, and Annual for PHP 1,990 per year (about PHP 166 per month). The Annual plan works out to roughly two months free compared to paying monthly.' },
+    { cat: 'Billing & subscription', icon: '📱', title: 'How do I pay with GCash?',
+      body: 'Choose a plan in Settings → Subscription, send the total to the GCash number shown, then enter your GCash reference number and submit. The admin verifies the payment and your access begins once it is approved.' },
+    { cat: 'Billing & subscription', icon: '⏳', title: 'How long does payment approval take?',
+      body: 'Once submitted, your payment goes to the admin for review. You will receive an email the moment it is approved, and your access begins automatically — you do not need to do anything further.' },
+    { cat: 'Billing & subscription', icon: '🔁', title: 'How do I renew or upgrade my subscription?',
+      body: 'Go to Settings → Subscription to see your current status. If your access has expired or you want to renew ahead of time, submit a new GCash payment for the plan you want and it will be reviewed by the admin.' },
+    { cat: 'Billing & subscription', icon: '📬', title: 'What happens if my payment is rejected?',
+      body: 'If a payment cannot be verified, the admin rejects it and your account status stays unchanged. You can submit a corrected payment with the right reference number. Contact your admin if you believe there was a mistake.' },
+
+    { cat: 'Troubleshooting', icon: '⚙️', title: 'What does "daily allowance used up" mean?',
+      body: 'The AI service is shared by all teachers, and the free tier has a limited number of tokens each day. When the allowance runs out, you briefly see a "try again in ~Xm" message. Other keys or a refreshed allowance kick in shortly after, so it is temporary and you do not need to do anything.' },
+    { cat: 'Troubleshooting', icon: '🐌', title: 'Generation is slow or says try again later',
+      body: 'This usually happens when the shared AI pool has hit its daily or per-minute cap. Wait a few minutes and try again. Adding more keys to the pool (done by the admin) increases shared capacity and reduces these pauses.' },
+    { cat: 'Troubleshooting', icon: '🔑', title: 'I cannot sign in to my account',
+      body: 'Check that you are using the email and password you registered with. If you have never signed in before, complete the sign-up flow for your invitation. For access issues, contact your administrator.' },
+    { cat: 'Troubleshooting', icon: '🖼️', title: 'My download or preview looks off',
+      body: 'Try re-generating the document after selecting a nearby template, or edit the text directly in the workspace. Formatting details can always be adjusted in the editor before you submit or print.' },
+  ];
+
+  const catMeta = {
+    'Getting started': { icon: '🌱', blurb: 'New here? Start with the basics.' },
+    'Using the AI editor': { icon: '✍️', blurb: 'Create, edit, and revise your documents.' },
+    'Privacy & data': { icon: '🔒', blurb: 'How your information is handled.' },
+    'Billing & subscription': { icon: '💳', blurb: 'Free documents, plans, and GCash payments.' },
+    'Troubleshooting': { icon: '🛠️', blurb: 'Common messages and quick fixes.' },
+  };
+
+  const escA = (s) => esc(s);
+  const card = (a) => `<article class="help-card">
+      <button class="help-summary" type="button" data-help-toggle>
+        <span class="help-icon" aria-hidden="true">${a.icon}</span>
+        <span class="help-q">${escA(a.title)}</span><span class="help-caret" aria-hidden="true">›</span>
+      </button>
+      <div class="help-answer" hidden><p>${escA(a.body)}</p></div>
+    </article>`;
+
+  const renderSections = (list) => Object.keys(catMeta)
+    .map((cat) => {
+      const items = list.filter((a) => a.cat === cat);
+      if (!items.length) return '';
+      const m = catMeta[cat];
+      return `<section class="help-section"><div class="help-cat-head"><span class="help-cat-icon">${m.icon}</span><div><h3>${escA(cat)}</h3><p>${escA(m.blurb)}</p></div></div>
+        <div class="help-list">${items.map(card).join('')}</div></section>`;
+    }).join('');
+
+  const allHTML = renderSections(ARTICLES);
+
+  root.innerHTML = `
+    <header class="help-hero">
+      <h1 class="title">Help center</h1>
+      <p class="help-sub">Everything you need to make the most of BLinkMaestra — search a question, or browse by topic.</p>
+      <div class="help-search"><span class="help-search-icon" aria-hidden="true">⌕</span>
+        <input id="help-query" type="search" placeholder="Search help articles…" autocomplete="off">
+        <span id="help-count" class="help-count"></span></div>
+    </header>
+    <div id="help-body">${allHTML}</div>
+    <div class="help-section"><div class="help-cat-head"><span class="help-cat-icon">💬</span><div><h3>Still need help?</h3><p>Can’t find what you’re looking for?</p></div></div>
+      <div class="help-contact"><p>Get in touch and we’ll point you in the right direction. Check your <button class="help-link" data-nav-jump="settings">Settings</button>, or contact your administrator for account and billing questions.</p></div></div>`;
+
+  const body = root.querySelector('#help-body');
+  const countEl = root.querySelector('#help-count');
+  const q = root.querySelector('#help-query');
+
+  root.addEventListener('click', (e) => {
+    const sum = e.target.closest('[data-help-toggle]');
+    if (sum) {
+      const cardEl = sum.closest('.help-card');
+      const ans = cardEl.querySelector('.help-answer');
+      const open = !ans.hidden;
+      ans.hidden = open;
+      cardEl.classList.toggle('open', !open);
+    }
+  });
+
+  const findMatches = (query) => {
+    const t = query.trim().toLowerCase();
+    if (!t) return ARTICLES;
+    const scored = ARTICLES.map((a) => {
+      const title = a.title.toLowerCase();
+      const bodyTxt = a.body.toLowerCase();
+      let score = 0;
+      if (title === t) score = 4;
+      else if (title.startsWith(t)) score = 3;
+      else if (title.includes(t)) score = 2;
+      else if (bodyTxt.includes(t)) score = 1;
+      if (t.split(' ').every((w) => title.includes(w))) score += 1;
+      return { a, score };
+    }).filter((s) => s.score > 0).sort((x, y) => y.score - x.score);
+    return scored.map((s) => s.a);
+  };
+
+  q.addEventListener('input', () => {
+    const matches = findMatches(q.value);
+    body.innerHTML = matches.length ? renderSections(matches) : `<div class="help-empty"><p>No articles match “${escA(q.value)}”. Try a different keyword.</p></div>`;
+    countEl.textContent = q.value.trim() ? `${matches.length} result${matches.length === 1 ? '' : 's'}` : '';
+  });
+
   bindCommon(root);
 }
 
@@ -1685,8 +2071,10 @@ async function paywallView(root) {
   let me;
   try { me = await api.me(); }
   catch { root.innerHTML = '<div class="card"><p class="card-copy">Please sign in to continue.</p></div>'; return; }
-  const plan = me.payments?.plan || { perMonth: 100, months: [1, 3, 6, 12], gcashNumber: '' };
-  const perMonth = plan.perMonth || 100;
+  const plan = me.payments?.plan || { perMonth: 199, annualTotal: 1990, gcashNumber: '' };
+  const perMonth = plan.perMonth || 199;
+  const annualTotal = plan.annualTotal || 1990;
+  const annualEff = plan.annualEffectiveMonthly === undefined ? Math.round(annualTotal / 12) : plan.annualEffectiveMonthly;
   const pending = (me.payments?.pendingOrders || []);
 
   // A payment is already waiting for admin approval — show a review notice
@@ -1711,12 +2099,15 @@ async function paywallView(root) {
     <h1 class="title">Your free documents are used up</h1>
     <p class="card-copy" style="margin:12px 0 20px">Keep creating with a BLinkMaestra subscription. Choose how many months to pay for, then submit your GCash payment for review. Your access begins the day the admin approves it.</p>
     <div style="display:flex;flex-direction:column;gap:12px;align-items:stretch;margin:0 auto;max-width:380px;text-align:left">
-      <label style="font-weight:600;font-size:13px">Months
-        <select id="pw-months" style="margin-top:4px">${plan.months.map((m) => `<option value="${m}">${m} month${m > 1 ? 's' : ''} — PHP ${(m * perMonth).toLocaleString()}</option>`).join('')}</select>
+      <label style="font-weight:600;font-size:13px">Plan
+        <select id="pw-plan" style="margin-top:4px">
+          <option value="monthly">Monthly — PHP ${perMonth.toLocaleString()}/month</option>
+          <option value="annual">Annual — PHP ${annualTotal.toLocaleString()}/year (about PHP ${annualEff}/month)</option>
+        </select>
       </label>
       <p class="card-copy" id="pw-quote" style="font-weight:600"></p>
       <label style="font-weight:600;font-size:13px">Pay via GCash to
-        <strong style="display:block;font-size:20px;color:#0b5e55;margin-top:4px">09299865338</strong>
+        <strong style="display:block;font-size:20px;color:var(--forest);margin-top:4px">${esc(plan.gcashNumber || '')}</strong>
       </label>
       <label style="font-weight:600;font-size:13px">GCash reference number
         <input id="pw-ref" placeholder="e.g. 4409 3123 4567 8901" required>
@@ -1728,11 +2119,16 @@ async function paywallView(root) {
     </div>
     <p class="card-copy" id="pw-status" style="margin-top:16px"></p></div>`;
 
-  const monthsEl = root.querySelector('#pw-months');
+  const planEl = root.querySelector('#pw-plan');
   const quoteEl = root.querySelector('#pw-quote');
-  const refreshQuote = () => { quoteEl.textContent = `Total: PHP ${(Number(monthsEl.value) * perMonth).toLocaleString()} — send this amount via GCash.`; };
+  const refreshQuote = () => {
+    const v = planEl.value;
+    quoteEl.textContent = v === 'annual'
+      ? `Total: PHP ${annualTotal.toLocaleString()} — send this amount via GCash.`
+      : `Total: PHP ${perMonth.toLocaleString()} — send this amount via GCash.`;
+  };
   refreshQuote();
-  monthsEl.addEventListener('change', refreshQuote);
+  planEl.addEventListener('change', refreshQuote);
 
   root.querySelector('#pw-submit').addEventListener('click', async () => {
     const btn = root.querySelector('#pw-submit');
@@ -1742,7 +2138,7 @@ async function paywallView(root) {
     btn.disabled = true;
     status.textContent = '';
     try {
-      await api.createOrder({ months: Number(monthsEl.value), ref, note: root.querySelector('#pw-note').value.trim() });
+      await api.createOrder({ plan: planEl.value, ref, note: root.querySelector('#pw-note').value.trim() });
       status.textContent = 'Payment submitted for review! You will be emailed once it is approved.';
       root.querySelector('#pw-ref').value = '';
     } catch (err) { status.textContent = err.message; }
