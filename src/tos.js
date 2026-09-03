@@ -54,7 +54,13 @@ export function calculateTos({ competencies, numberOfItems }) {
   const rows = parseCompetencies(competencies); const totalItems = Math.floor(Number(numberOfItems) || 0); const totalDays = rows.reduce((a, r) => a + r.days, 0);
   if (!rows.length || !totalDays || totalItems < 1) throw new Error('Enter competencies with teaching days and a positive number of items.');
   const raw = rows.map((r) => r.days / totalDays * totalItems); const allocations = largestRemainder(raw, totalItems); let n = 0;
-  const outputRows = rows.map((r, i) => ({ ...r, weight: r.days / totalDays, rawItems: raw[i], items: allocations[i], cognitive: cognitiveCounts(allocations[i]) }));
+  let running = 1;
+  const outputRows = rows.map((r, i) => {
+    const items = allocations[i];
+    const row = { ...r, weight: r.days / totalDays, rawItems: raw[i], items, itemStart: running, itemEnd: running + items - 1, cognitive: cognitiveCounts(items) };
+    running += items;
+    return row;
+  });
   const target = cognitiveCounts(totalItems);
   const current = Object.fromEntries(LEVELS.map((level) => [level, outputRows.reduce((sum, row) => sum + row.cognitive[level], 0)]));
   while (current.Evaluating + current.Creating > target.Evaluating + target.Creating) {
@@ -73,7 +79,12 @@ export function calculateTos({ competencies, numberOfItems }) {
 }
 function esc(v) { return String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 export function assembleTosHtml({ title, tos, items, assessmentType }) {
-  const table = `<table><tr><th>Learning Competency</th><th>Days</th><th>Weight</th><th>Raw Items</th><th>Total Items</th><th>Easy (60%)</th><th>Average (30%)</th><th>Difficult (10%)</th><th>Item Placement</th></tr>${tos.rows.map((r) => `<tr><td>${esc(r.competency)}</td><td>${r.days}</td><td>${(r.weight * 100).toFixed(2)}%</td><td>${r.rawItems.toFixed(2)}</td><td>${r.items}</td><td>${r.cognitive.Remembering + r.cognitive.Understanding}</td><td>${r.cognitive.Applying + r.cognitive.Analyzing}</td><td>${r.cognitive.Evaluating + r.cognitive.Creating}</td><td>${r.items ? `${r.cognitive.Remembering}R/${r.cognitive.Understanding}U/${r.cognitive.Applying}Ap/${r.cognitive.Analyzing}An/${r.cognitive.Evaluating}E/${r.cognitive.Creating}C` : '—'}</td></tr>`).join('')}<tr><th>Total</th><th>${tos.totalDays}</th><th>100%</th><th>${tos.totalItems}</th><th>${tos.totalItems}</th><th>${tos.cognitiveTotals.Remembering + tos.cognitiveTotals.Understanding}</th><th>${tos.cognitiveTotals.Applying + tos.cognitiveTotals.Analyzing}</th><th>${tos.cognitiveTotals.Evaluating + tos.cognitiveTotals.Creating}</th><th>1-${tos.totalItems}</th></tr></table>`;
+  const levels = ['Remembering', 'Understanding', 'Applying', 'Analyzing', 'Evaluating', 'Creating'];
+  const abbr = { Remembering: 'R', Understanding: 'U', Applying: 'Ap', Analyzing: 'An', Evaluating: 'E', Creating: 'Cre' };
+  const headerCells = `<th>Learning Competency</th><th>Days</th><th>Weight</th><th>Raw Items</th><th>Total Items</th>${levels.map((l) => `<th>${abbr[l]}</th>`).join('')}<th>Item Placement</th>`;
+  const rowCells = (r) => `<tr><td>${esc(r.competency)}</td><td>${r.days}</td><td>${(r.weight * 100).toFixed(2)}%</td><td>${r.rawItems.toFixed(2)}</td><td>${r.items}</td>${levels.map((l) => `<td>${r.cognitive[l]}</td>`).join('')}<td>${r.items ? `${r.itemStart}-${r.itemEnd}` : '—'}</td></tr>`;
+  const totalCells = `<th>Total</th><th>${tos.totalDays}</th><th>100%</th><th>${tos.totalItems}</th><th>${tos.totalItems}</th>${levels.map((l) => `<th>${tos.cognitiveTotals[l]}</th>`).join('')}<th>1-${tos.totalItems}</th>`;
+  const table = `<table><tr>${headerCells}</tr>${tos.rows.map(rowCells).join('')}<tr>${totalCells}</tr></table>`;
   const ordered = (items || []).sort((a, b) => a.number - b.number);
   const questions = ordered.map((i) => `<li><p><strong>${i.number}. ${esc(i.stem)}</strong></p>${i.options?.length ? `<ul>${i.options.map((o) => `<li>${esc(o.label)}. ${esc(o.text)}</li>`).join('')}</ul>` : ''}</li>`).join('');
   const key = ordered.map((i) => `<li>${i.number}. ${esc(i.answerLabel)}${i.answerText ? ` - ${esc(i.answerText)}` : ''}</li>`).join('');

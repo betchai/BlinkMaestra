@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { seedTemplates } from '../src/templates.js';
-import { calculateTos, placementLines, normalizeLevel } from '../src/tos.js';
+import { calculateTos, assembleTosHtml, placementLines, normalizeLevel } from '../src/tos.js';
 
 test('DepEd 015 template is seeded with the required inputs', () => {
   const template = seedTemplates().find((item) => item.id === 'deped-015-tos');
@@ -47,6 +47,31 @@ test('placementLines renders the exact TOS slot for every item number', () => {
 
   // Out-of-range numbers render an explicit unassigned slot, never a crash.
   assert.equal(placementLines(tos.blueprint, 5, 6)[0], '5 → (unassigned)');
+});
+
+test('TOS assigns sequential running item ranges across competencies', () => {
+  const tos = calculateTos({ competencies: 'Fraction Basics: 6 days\nAdding Fractions: 4 days', numberOfItems: 40 });
+  assert.deepEqual(tos.rows.map((row) => row.items), [24, 16]);
+  // Running cumulative range: first competency gets 1-24, the next 25-40 (items do not restart).
+  assert.deepEqual(tos.rows.map((row) => [row.itemStart, row.itemEnd]), [[1, 24], [25, 40]]);
+});
+
+test('TOS table presents each cognitive level as its own column and a running item range', () => {
+  const tos = calculateTos({ competencies: 'Fraction Basics: 6 days\nAdding Fractions: 4 days', numberOfItems: 40 });
+  const html = assembleTosHtml({ title: 'T', tos, items: [], assessmentType: 'Multiple Choice' });
+
+  // Six separate cognitive-level columns (Rem/Und/App/Ana/Eva/Cre) are present in the header.
+  for (const abbr of ['R', 'U', 'Ap', 'An', 'E', 'Cre']) {
+    assert.ok(new RegExp(`<th>${abbr}</th>`).test(html), `expected a ${abbr} column`);
+  }
+
+  // Each competency row shows its per-level counts and its running item-placement range.
+  assert.ok(/<tr><td>Fraction Basics<\/td>/.test(html));
+  assert.match(html, /<tr><td>Fraction Basics<\/td><td>6<\/td>.*<\/td><td>1-24<\/td><\/tr>/);
+  assert.match(html, /<tr><td>Adding Fractions<\/td><td>4<\/td>.*<\/td><td>25-40<\/td><\/tr>/);
+
+  // The total row reports the full 1-40 range.
+  assert.match(html, /<th>1-40<\/th><\/tr>/);
 });
 
 test('normalizeLevel maps classifier labels to canonical TOS levels', () => {
