@@ -465,7 +465,6 @@ function workflowView(root) {
     ? `<datalist id="competency-options">${competencySuggestions.map((c) => `<option value="${esc(c)}"></option>`).join('')}</datalist>` : '';
   const isCompetencyField = (f) => /competency|topic/i.test(f);
   const isTos = template.id === 'deped-015-tos' || template.id === 'tos-v3';
-  const isDeped015 = template.id === 'deped-015-tos';
   let savedCompetencyList = [];
   const tosSelects = {
     'Assessment type': ['Summative Test 1', 'Summative Test 2', 'Full Assessment'],
@@ -473,7 +472,7 @@ function workflowView(root) {
   };
   const tosCompetencyDatalist = (id) => `<datalist id="${id}">${savedCompetencyList.map((c) => `<option value="${esc(`${c.description} (${c.code})`)}"></option>`).join('')}</datalist>`;
   const inputFor = (f) => `<span style="display:flex;gap:7px">
-    ${isTos && f === 'Competencies with teaching days' ? `<span id="wf-tos-competencies" style="display:grid;gap:8px;flex:1">${isDeped015
+    ${isTos && f === 'Competencies with teaching days' ? `<span id="wf-tos-competencies" style="display:grid;gap:8px;flex:1">${isTos
         ? `<span class="tos-row" style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;position:relative">
              <input class="tos-name" list="tos-competency-options" placeholder="Select or type a competency…" style="flex:1">
              <button type="button" class="tool tos-browse" title="Browse the DepEd competency library">Browse…</button>
@@ -538,7 +537,7 @@ function workflowView(root) {
     const list = root.querySelector('#wf-tos-competencies');
     const savedCodes = competencySuggestions;
     let savedCompetencyMap = {};
-    if (isDeped015 && savedCodes.length) {
+    if (isTos && savedCodes.length) {
       fetch('/api/competencies', { credentials: 'same-origin' })
         .then((r) => r.json())
         .then((data) => {
@@ -552,7 +551,7 @@ function workflowView(root) {
         .catch(() => {});
     }
     function buildTosRowHtml() {
-      if (isDeped015) {
+      if (isTos) {
         return `<span class="tos-row" style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;position:relative">
           <input class="tos-name" list="tos-competency-options-add" placeholder="Select or type a competency…" style="flex:1">
           <button type="button" class="tool tos-browse" title="Browse the DepEd competency library">Browse…</button>
